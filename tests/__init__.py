@@ -1,0 +1,3 @@
+"""
+TradeSense test suite.
+"""

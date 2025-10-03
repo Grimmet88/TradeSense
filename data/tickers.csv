@@ -1,0 +1,16 @@
+ticker,name,sector
+AAPL,Apple Inc.,Technology
+MSFT,Microsoft Corporation,Technology
+GOOGL,Alphabet Inc.,Technology
+AMZN,Amazon.com Inc.,Consumer Cyclical
+TSLA,Tesla Inc.,Automotive
+META,Meta Platforms Inc.,Technology
+NVDA,NVIDIA Corporation,Technology
+JPM,JPMorgan Chase & Co.,Financial Services
+V,Visa Inc.,Financial Services
+JNJ,Johnson & Johnson,Healthcare
+WMT,Walmart Inc.,Consumer Defensive
+PG,Procter & Gamble Co.,Consumer Defensive
+BAC,Bank of America Corp.,Financial Services
+DIS,The Walt Disney Company,Communication Services
+NFLX,Netflix Inc.,Communication Services
