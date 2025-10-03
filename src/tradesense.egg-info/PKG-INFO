@@ -1,0 +1,14 @@
+Metadata-Version: 2.4
+Name: tradesense
+Version: 0.1.0
+Summary: TradeSense Stock Analysis
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: pandas>=2.2
+Requires-Dist: numpy>=1.26
+Requires-Dist: scikit-learn>=1.4
+Requires-Dist: yfinance>=0.2
+Requires-Dist: requests>=2.32
+Requires-Dist: python-dotenv>=1.0
+Requires-Dist: loguru>=0.7
+Requires-Dist: ta>=0.11
