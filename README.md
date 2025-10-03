@@ -1,0 +1,2 @@
+# TradeSense
+Stocking trading Input
