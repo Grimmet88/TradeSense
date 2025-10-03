@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TradeSense Market Scan</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 20px; background-color: #e9f2f7; color: #333; line-height: 1.6; }
+        .container { max-width: 1000px; margin: 30px auto; background-color: #fff; padding: 25px; border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+        h1 { color: #2c3e50; text-align: center; margin-bottom: 25px; }
+        h2 { color: #34495e; border-bottom: 2px solid #3498db; padding-bottom: 10px; margin-top: 30px; }
+        .info-box { background-color: #f8f9fa; border-left: 5px solid #3498db; padding: 15px; margin-bottom: 20px; border-radius: 5px; }
+        form { display: flex; gap: 10px; margin-bottom: 20px; align-items: center; }
+        form label { font-weight: bold; }
+        form input[type="text"] { flex-grow: 1; padding: 10px; border: 1px solid #ccc; border-radius: 5px; font-size: 16px; }
+        form button { padding: 10px 20px; background-color: #28a745; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 16px; transition: background-color 0.3s ease; }
+        form button:hover { background-color: #218838; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { padding: 12px 15px; text-align: left; border-bottom: 1px solid #ddd; }
+        th { background-color: #3498db; color: white; font-weight: bold; }
+        tr:hover { background-color: #f1f1f1; }
+        .signal-BUY { background-color: #e6ffe6; color: #28a745; font-weight: bold; }
+        .signal-SELL { background-color: #ffe6e6; color: #dc3545; font-weight: bold; }
+        .signal-HOLD { background-color: #f0f8ff; color: #007bff; }
+        .signal-HOLD-Bullish { background-color: #e6ffe6; color: #28a745; }
+        .signal-HOLD-Bearish { background-color: #ffe6e6; color: #dc3545; }
+        .signal-N-A-No-Data, .signal-N-A-Insufficient-Data { background-color: #f2f2f2; color: #6c757d; font-style: italic; }
+        .confidence-High { color: #28a745; font-weight: bold; }
+        .confidence-Medium { color: #ffc107; font-weight: bold; }
+        .confidence-Low { color: #fd7e14; }
+        .confidence-Very-Low { color: #dc3545; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>TradeSense Market Scanner</h1>
+        <div class="info-box">
+            Scanning **{{ tickers_to_scan | length }}** tickers using **{{ short_window }}**-day and **{{ long_window }}**-day Moving Averages.
+            <br>Analyzing data from **{{ signals[0].date if signals and signals[0].date != 'N/A' else 'N/A' }}** to **{{ signals[0].date if signals and signals[0].date != 'N/A' else 'N/A' }}** (latest close).
+        </div>
+
+        <form action="{{ url_for('scan_tickers') }}" method="post">
+            <label for="tickers">Tickers (comma-separated):</label>
+            <input type="text" id="tickers" name="tickers" value="{{ tickers_to_scan | join(',') }}">
+            <button type="submit">Scan</button>
+        </form>
+
+        <h2>Latest Trading Signals</h2>
+
+        {% if signals %}
+            <table>
+                <thead>
+                    <tr>
+                        <th>Ticker</th>
+                        <th>Date</th>
+                        <th>Status</th>
+                        <th>Close Price</th>
+                        <th>Short MA</th>
+                        <th>Long MA</th>
+                        <th>Confidence</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for signal in signals %}
+                    <tr class="signal-{{ signal.type | replace(' ', '-') }}">
+                        <td><strong>{{ signal.ticker }}</strong></td>
+                        <td>{{ signal.date }}</td>
+                        <td>{{ signal.type }}</td>
+                        <td>${{ signal.price }}</td>
+                        <td>${{ signal.short_ma }}</td>
+                        <td>${{ signal.long_ma }}</td>
+                        <td class="confidence-{{ signal.confidence | replace(' ', '-') }}">{{ signal.confidence }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        {% else %}
+            <p class="no-signals">No tickers to scan or no signals generated.</p>
+        {% endif %}
+
+    </div>
+</body>
+</html>
