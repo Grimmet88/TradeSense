@@ -1,0 +1,226 @@
+:root {
+  --bg: #0b111b;
+  --panel: #0f1724;
+  --text: #cde1f7;
+  --accent: #00b7ff;
+  --buy: #2ecc71;
+  --hold: #f1c40f;
+  --sell: #e74c3c;
+  --ring: 0 0 0 2px rgba(0,183,255,.3);
+  font-family: 'Inter', sans-serif;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  margin: 0;
+}
+
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: var(--panel);
+  padding: 12px 20px;
+  border-bottom: 1px solid #1e2a3b;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.logo {
+  width: 36px;
+  height: 36px;
+  background: var(--accent);
+  color: #062435;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 18px;
+}
+.title h1 {
+  margin: 0;
+  font-size: 18px;
+}
+.title p {
+  margin: 0;
+  font-size: 13px;
+  color: #90a4b7;
+}
+
+.search {
+  display: flex;
+  gap: 6px;
+}
+.search input {
+  background: #0d1420;
+  border: 1px solid #1e2a3b;
+  color: var(--text);
+  padding: 8px 10px;
+  border-radius: 8px;
+}
+.search .btn {
+  padding: 8px 12px;
+}
+
+.container {
+  padding: 20px;
+  max-width: 1100px;
+  margin: auto;
+}
+
+.controls {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+}
+.control label {
+  display: block;
+  font-size: 13px;
+  margin-bottom: 2px;
+}
+.control select {
+  padding: 6px;
+  border-radius: 6px;
+  background: #0d1420;
+  border: 1px solid #1e2a3b;
+  color: var(--text);
+}
+
+.btn {
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  background: #1e2a3b;
+  color: var(--text);
+  font-weight: 600;
+  padding: 8px 14px;
+}
+.btn.primary {
+  background: var(--accent);
+  color: #062435;
+}
+.btn.secondary {
+  background: #162132;
+  color: var(--text);
+}
+
+.summary {
+  margin: 20px 0;
+  font-style: italic;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 20px;
+}
+
+.lane h2 {
+  text-align: center;
+}
+
+.cardlist {
+  display: grid;
+  gap: 10px;
+}
+
+.card {
+  background: #0d1420;
+  border: 1px solid #1e2a3b;
+  border-radius: 10px;
+  padding: 14px;
+}
+.row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.ticker {
+  font-size: 18px;
+  font-weight: 700;
+}
+.name {
+  font-size: 14px;
+  color: #90a4b7;
+}
+.badges {
+  display: flex;
+  gap: 5px;
+}
+.badge {
+  background: #162132;
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 12px;
+  text-transform: uppercase;
+}
+.conf {
+  margin-top: 6px;
+  height: 6px;
+  border-radius: 3px;
+  background: #1e2a3b;
+}
+.conf .fill {
+  height: 100%;
+  border-radius: 3px;
+}
+.conf.buy .fill { background: var(--buy); }
+.conf.hold .fill { background: var(--hold); }
+.conf.sell .fill { background: var(--sell); }
+
+.foot {
+  text-align: center;
+  color: #90a4b7;
+  margin-top: 20px;
+  font-size: 13px;
+}
+
+.btn.primary:hover,
+.btn.secondary:hover {
+  filter: brightness(1.15);
+}
+
+.drawer {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.5);
+  display: none;
+}
+.drawer[aria-hidden="false"] {
+  display: block;
+}
+.drawer-panel {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 400px;
+  background: var(--panel);
+  border-left: 1px solid #1e2a3b;
+  padding: 16px;
+  overflow-y: auto;
+}
+.iconbtn {
+  background: transparent;
+  border: 1px solid #1e2a3b;
+  border-radius: 8px;
+  color: var(--text);
+  padding: 4px 8px;
+  cursor: pointer;
+}
+.smallbtn {
+  font-size: 12px;
+  border: 1px solid #1e2a3b;
+  border-radius: 6px;
+  background: #0d1420;
+  color: var(--text);
+  padding: 5px 7px;
+  cursor: pointer;
+}
+
