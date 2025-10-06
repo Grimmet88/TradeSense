@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <title>TradeSense — Trade Analysis</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./styles.css"/>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <!-- Header / Nav -->
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">TS</div>
+      <div class="title">
+        <h1>TradeSense</h1>
+        <p>Groq-powered market reasoning — Buy • Hold • Sell</p>
+      </div>
+    </div>
+
+    <nav class="nav">
+      <a class="navlink" href="./index.html">Home</a>
+      <a class="navlink active" href="./analysis.html">Trade Analysis</a>
+    </nav>
+  </header>
+
+  <!-- Main 2-column layout: content + right sidebar -->
+  <main class="container layout">
+    <!-- Left: controls + results -->
+    <section class="content">
+      <!-- Controls -->
+      <section class="controls">
+        <div class="control">
+          <label for="risk">Risk</label>
+          <select id="risk">
+            <option value="low">Low</option>
+            <option value="medium" selected>Medium</option>
+            <option value="high">High</option>
+          </select>
+        </div>
+
+        <div class="control">
+          <label for="region">Region</label>
+          <select id="region">
+            <option value="US" selected>US</option>
+            <option value="Global">Global</option>
+          </select>
+        </div>
+
+        <button id="runBtn" class="btn primary">Run Analysis</button>
+        <button id="exportBtn" class="btn">Export CSV</button>
+
+        <div class="control" style="margin-left:auto; min-width:280px;">
+          <label for="tickerInput">Analyze a specific ticker</label>
+          <form id="searchForm" class="search" style="display:flex; gap:8px;">
+            <input id="tickerInput" placeholder="e.g., NVDA, AAPL, BRK.B" autocomplete="off"/>
+            <button type="submit" class="btn">Analyze</button>
+          </form>
+        </div>
+      </section>
+
+      <!-- Summary -->
+      <section class="card" style="margin-bottom:16px;">
+        <div id="summary"><em>Click “Run Analysis” to fetch the latest ideas.</em></div>
+      </section>
+
+      <!-- Lanes -->
+      <section class="grid analysis-grid">
+        <div class="section">
+          <h2>Buy</h2>
+          <div id="buyList" class="grid lane-grid"></div>
+        </div>
+
+        <div class="section">
+          <h2>Hold</h2>
+          <div id="holdList" class="grid lane-grid"></div>
+        </div>
+
+        <div class="section">
+          <h2>Sell</h2>
+          <div id="sellList" class="grid lane-grid"></div>
+        </div>
+      </section>
+
+      <!-- Under the Radar -->
+      <section class="section">
+        <h2>Under-the-Radar Ideas</h2>
+        <div id="utrList" class="grid lane-grid"></div>
+      </section>
+
+      <footer class="foot">
+        <div id="disclaimers" style="margin-bottom:6px;"></div>
+        <div id="badge" class="navlink" style="display:inline-block;" hidden>Offline (mock data)</div>
+      </footer>
+    </section>
+
+    <!-- Right: persistent sidebar (Compare + Watchlist) -->
+    <aside class="sidebar">
+      <div class="card sticky">
+        <h3 style="margin-bottom:8px;">Compare Tickers</h3>
+        <form id="compareForm" class="drawer-row" style="display:flex; gap:8px; margin-bottom:10px;">
+          <input id="compareInput" placeholder="Add ticker (e.g., AAPL)" />
+          <button id="compareRunBtn" class="btn primary" type="button">Run Compare</button>
+        </form>
+        <div id="compareList" class="drawer-list" style="margin-bottom:10px;"></div>
+        <div id="compareResults" class="grid"></div>
+      </div>
+
+      <div class="card sticky">
+        <h3 style="margin-bottom:8px;">Watchlist</h3>
+        <div id="watchItems" class="drawer-list"></div>
+      </div>
+    </aside>
+  </main>
+
+  <!-- Hidden drawers kept for compatibility (app.js might reference them) -->
+  <aside id="compareDrawer" class="drawer" aria-hidden="true" hidden></aside>
+  <aside id="watchDrawer" class="drawer" aria-hidden="true" hidden></aside>
+
+  <!-- App logic -->
+  <script type="module" src="./app.js?v=4"></script>
+</body>
+</html>
+

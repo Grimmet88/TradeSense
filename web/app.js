@@ -1,331 +1,408 @@
-// ---------- Helpers ----------
+// web/app.js
+/* TradeSense – Analysis UI logic (Buy/Hold/Sell, single-ticker analyze, compare, watchlist) */
+
 const $ = (id) => document.getElementById(id);
-const state = {
-  mock: false,
-  screen: null,            // latest screen JSON
-  watchlist: loadWatchlist(),
-  compareSet: new Set(),   // tickers selected for compare
-  charts: new Map(),       // ticker -> Chart instance
-};
 
-function loadWatchlist(){
-  try { return JSON.parse(localStorage.getItem('ts_watchlist')||'[]'); }
-  catch { return []; }
+// Controls / panes
+const riskSel = $('risk');
+const regionSel = $('region');
+const runBtn = $('runBtn');
+const exportBtn = $('exportBtn');
+
+const summaryEl = $('summary');
+const buyList = $('buyList');
+const holdList = $('holdList');
+const sellList = $('sellList');
+const utrList = $('utrList');
+const disclaimersEl = $('disclaimers');
+const badgeEl = $('badge');
+
+// Search single ticker
+const searchForm = $('searchForm');
+const tickerInput = $('tickerInput');
+
+// Right sidebar: compare + watchlist
+const compareForm = $('compareForm');
+const compareInput = $('compareInput');
+const compareRunBtn = $('compareRunBtn');
+const compareList = $('compareList');
+const compareResults = $('compareResults');
+
+const watchItems = $('watchItems');
+
+let lastResult = null; // keep most-recent screen/analyze payload for export, etc.
+
+// -------- Utilities --------
+function fmtPct(n) { return `${Math.max(0, Math.min(100, Math.round(n)))}%`; }
+function esc(s='') { return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// cache tiny GETs (per page life)
+const mem = new Map();
+async function getJSON(url) {
+  if (mem.has(url)) return mem.get(url);
+  const p = fetch(url, { headers: { 'Accept': 'application/json' } }).then(async r => {
+    const j = await r.json();
+    if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
+    return j;
+  });
+  mem.set(url, p);
+  return p;
 }
-function saveWatchlist(){ localStorage.setItem('ts_watchlist', JSON.stringify(state.watchlist)); }
 
-async function post(path, body) {
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), 10000);
+async function postJSON(url, body) {
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: {'Content-Type':'application/json', 'Accept':'application/json'},
+    body: JSON.stringify(body||{})
+  });
+  const j = await r.json().catch(()=> ({}));
+  if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
+  return j;
+}
+
+// -------- Charts (sparklines) --------
+async function renderSparkline(canvas, ticker, days=180) {
   try {
-    const res = await fetch(path, {
-      method: 'POST', headers: { 'Content-Type':'application/json' },
-      body: JSON.stringify(body || {}), signal: ctrl.signal
+    const data = await getJSON(`/api/series?ticker=${encodeURIComponent(ticker)}&days=${days}`);
+    const xs = data.series.map(p => new Date(p.t));
+    const ys = data.series.map(p => p.close);
+
+    if (!xs.length) {
+      canvas.replaceWith(elNode(`<div class="text-sm" style="color:#9ab3cc">No price data</div>`));
+      return;
+    }
+
+    // Chart.js (already loaded in analysis.html)
+    const ctx = canvas.getContext('2d');
+    // destroy old chart if any
+    if (canvas._ch) { canvas._ch.destroy(); }
+
+    canvas._ch = new Chart(ctx, {
+      type: 'line',
+      data: { labels: xs, datasets: [{ data: ys, fill: false, tension: 0.25 }] },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false }, tooltip: { enabled: false } },
+        elements: { point: { radius: 0 } },
+        scales: { x: { display: false }, y: { display: false } }
+      }
     });
-    clearTimeout(t);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return await res.json();
   } catch (e) {
-    state.mock = true;
-    $('badge').hidden = false;
-    // Minimal mock to keep UI alive
-    return {
-      summary:"Offline demo mode. Showing mock data.",
-      buy:[ {ticker:"XOM",name:"Exxon Mobil",thesis:"Cash flow + dividend",timeframe:"medium",confidence:82,risk:"medium",catalysts:["OPEC","Margins"]} ],
-      hold:[ {ticker:"NVDA",name:"NVIDIA",thesis:"Leader, rich valuation",timeframe:"short",confidence:74,risk:"medium",catalysts:["DC demand"]} ],
-      sell:[ {ticker:"RIVN",name:"Rivian",thesis:"Cash burn risks",timeframe:"short",confidence:70,risk:"high",catalysts:["Deliveries"]} ],
-      underTheRadar:[ {ticker:"INMD",name:"InMode",whyInteresting:"High-margin medtech",timeframe:"medium",confidence:65,risk:"medium",catalysts:["Approvals"]} ],
-      disclaimers:["This is not financial advice.","Do your own research."]
-    };
+    canvas.replaceWith(elNode(`<div class="text-sm" style="color:#9ab3cc">Chart error</div>`));
+    console.error('[sparkline]', ticker, e);
   }
 }
 
-async function get(path) {
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), 10000);
+// -------- Rendering --------
+function elNode(html) {
+  const t = document.createElement('template');
+  t.innerHTML = html.trim();
+  return t.content.firstElementChild;
+}
+
+function stockCard(item, lane='buy') {
+  const {
+    ticker='', name='', thesis='',
+    timeframe='', confidence=0, risk='',
+    catalysts = []
+  } = item;
+
+  const confW = Math.max(0, Math.min(100, Number(confidence)||0));
+
+  const catalystsHtml = Array.isArray(catalysts) && catalysts.length
+    ? `<div class="text-sm" style="color:#9ab3cc"><strong>Catalysts:</strong> ${catalysts.map(esc).join('; ')}</div>`
+    : '';
+
+  const card = elNode(`
+    <article class="stock-card card">
+      <div style="display:flex; justify-content:space-between; align-items:baseline; gap:8px;">
+        <h3>${esc(ticker)} <span style="color:#9ab3cc; font-weight:400;">${esc(name)}</span></h3>
+        <span class="badge" style="color:#9ab3cc">${esc(timeframe)} • ${esc(risk)}</span>
+      </div>
+
+      <p>${esc(thesis)}</p>
+
+      <div class="conf-bar" title="Confidence: ${fmtPct(confW)}">
+        <div class="conf-bar-fill" style="width:${confW}%;"></div>
+      </div>
+
+      ${catalystsHtml}
+
+      <div style="height:80px; margin-top:8px;">
+        <canvas width="300" height="80"></canvas>
+      </div>
+
+      <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:8px;">
+        <button class="btn" data-watch="${esc(ticker)}">+ Watch</button>
+        <button class="btn" data-compare="${esc(ticker)}">+ Compare</button>
+      </div>
+    </article>
+  `);
+
+  // hook watch / compare buttons
+  card.querySelectorAll('[data-watch]').forEach(b=>{
+    b.addEventListener('click', ()=> addToWatchlist(ticker));
+  });
+  card.querySelectorAll('[data-compare]').forEach(b=>{
+    b.addEventListener('click', ()=> addToCompare(ticker));
+  });
+
+  // draw sparkline
+  const canvas = card.querySelector('canvas');
+  renderSparkline(canvas, ticker).catch(()=>{});
+
+  return card;
+}
+
+function renderResult(json, from='screen') {
+  lastResult = json;
+
+  // Summary
+  summaryEl.innerHTML = esc(json.summary || '');
+
+// lanes
+  const lanes = [
+    [buyList, json.buy],
+    [holdList, json.hold],
+    [sellList, json.sell]
+  ];
+  lanes.forEach(([root, arr]) => {
+    root.innerHTML = '';
+    if (Array.isArray(arr)) {
+      arr.forEach(it => root.appendChild(stockCard(it)));
+    }
+  });
+
+  // Under the radar
+  utrList.innerHTML = '';
+  if (Array.isArray(json.underTheRadar)) {
+    json.underTheRadar.forEach(it => {
+      const card = elNode(`
+        <article class="stock-card card">
+          <div style="display:flex; justify-content:space-between; align-items:baseline; gap:8px;">
+            <h3>${esc(it.ticker || '')} <span style="color:#9ab3cc; font-weight:400;">${esc(it.name || '')}</span></h3>
+            <span class="badge" style="color:#9ab3cc">${esc(it.timeframe || '')} • ${esc(it.risk || '')}</span>
+          </div>
+          <p>${esc(it.whyInteresting || it.thesis || '')}</p>
+          <div class="conf-bar"><div class="conf-bar-fill" style="width:${fmtPct(it.confidence||0)}"></div></div>
+          <div style="height:80px; margin-top:8px;">
+            <canvas width="300" height="80"></canvas>
+          </div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:8px;">
+            <button class="btn" data-watch="${esc(it.ticker || '')}">+ Watch</button>
+            <button class="btn" data-compare="${esc(it.ticker || '')}">+ Compare</button>
+          </div>
+        </article>
+      `);
+      card.querySelectorAll('[data-watch]').forEach(b=>{
+        b.addEventListener('click', ()=> addToWatchlist(it.ticker));
+      });
+      card.querySelectorAll('[data-compare]').forEach(b=>{
+        b.addEventListener('click', ()=> addToCompare(it.ticker));
+      });
+      const canvas = card.querySelector('canvas');
+      if (it.ticker) renderSparkline(canvas, it.ticker).catch(()=>{});
+      utrList.appendChild(card);
+    });
+  }
+
+  // Disclaimers
+  const d = Array.isArray(json.disclaimers) ? json.disclaimers : [];
+  disclaimersEl.innerHTML = d.map(t => `<div style="color:#9ab3cc">${esc(t)}</div>`).join('');
+
+  // Hide/show mock badge based on whether response looks mocked
+  const mockish =
+    (json.buy?.some(x => x.ticker === 'XOM') && json.hold?.some(x => x.ticker === 'NVDA')) ||
+    /not financial advice/i.test((json.disclaimers||[]).join(' '));
+  badgeEl.hidden = !mockish;
+}
+
+// -------- Actions --------
+async function runScreen() {
   try {
-    const res = await fetch(path, { signal: ctrl.signal });
-    clearTimeout(t);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return await res.json();
+    summaryEl.innerHTML = '<em>Analyzing…</em>';
+    [buyList, holdList, sellList, utrList].forEach(el => el.innerHTML = '');
+    const body = { risk: riskSel.value, region: regionSel.value };
+    const json = await postJSON('/api/screen', body);
+    renderResult(json, 'screen');
   } catch (e) {
-    // fallback synthetic series
-    const now = Date.now(), oneDay=86400000;
-    const series = Array.from({length:120}, (_,i)=>({t: now-(119-i)*oneDay, close: 100+i*0.1 + Math.sin(i/9)*2}));
-    return { ticker: 'DEMO', series };
+    console.error('[screen]', e);
+    summaryEl.innerHTML = `<span style="color:#e88">Error: ${esc(e.message)}</span>`;
   }
 }
 
-function pct(n){ return Math.max(0, Math.min(100, Number(n)||0)); }
+async function analyzeTicker(ticker) {
+  const t = (ticker || '').trim().toUpperCase();
+  if (!t) return;
+  try {
+    summaryEl.innerHTML = `<em>Analyzing ${esc(t)}…</em>`;
+    [buyList, holdList, sellList, utrList].forEach(el => el.innerHTML = '');
+    const json = await postJSON('/api/analyze', { ticker: t });
+    renderResult(json, 'analyze');
+  } catch (e) {
+    console.error('[analyze]', e);
+    summaryEl.innerHTML = `<span style="color:#e88">Error: ${esc(e.message)}</span>`;
+  }
+}
 
-function csvEscape(s){ return `"${String(s).replaceAll('"','""')}"`; }
-function downloadCSV(filename, rows) {
-  const csv = rows.map(r => r.map(csvEscape).join(',')).join('\n');
-  const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
+// -------- Export CSV --------
+function toCSV(rows) {
+  const escCSV = (v='') => `"${String(v).replace(/"/g,'""')}"`;
+  const header = ['lane','ticker','name','confidence','risk','timeframe','thesis','catalysts'].map(escCSV).join(',');
+  const lines = [header];
+
+  const pushLane = (lane, arr=[]) => arr.forEach(it=>{
+    lines.push([
+      lane, it.ticker, it.name, it.confidence, it.risk, it.timeframe,
+      it.thesis || it.whyInteresting || '',
+      Array.isArray(it.catalysts) ? it.catalysts.join('; ') : ''
+    ].map(escCSV).join(','));
+  });
+
+  pushLane('BUY', lastResult?.buy);
+  pushLane('HOLD', lastResult?.hold);
+  pushLane('SELL', lastResult?.sell);
+  pushLane('UTR', lastResult?.underTheRadar);
+
+  return lines.join('\n');
+}
+
+function download(name, content, mime='text/plain') {
+  const blob = new Blob([content], { type: mime });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = url; a.download = filename; a.click();
-  URL.revokeObjectURL(url);
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click();
+  setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); }, 0);
 }
 
-// ---------- UI Rendering ----------
-function ideaActions(ticker, name){
-  const inWatch = state.watchlist.includes(ticker);
-  return `
-    <div class="actions">
-      <button class="smallbtn add-watch" data-t="${ticker}" data-n="${name}">${inWatch?'✓ In Watchlist':'+ Watch'}</button>
-      <button class="smallbtn view-chart" data-t="${ticker}">Chart</button>
-      <button class="smallbtn add-compare" data-t="${ticker}">Compare</button>
-    </div>
-  `;
-}
+// -------- Compare (sidebar) --------
+const compareSet = new Set();
 
-function ideaCard(lane, item) {
-  const riskClass = `risk-${item.risk}`;
-  const catalysts = (item.catalysts || []).slice(0,3).map(c=>`<li>${c}</li>`).join('');
-  const thesis = item.thesis || item.whyInteresting || '';
-  const id = `chart-${item.ticker}`;
-  return `
-    <div class="card" role="article">
-      <div class="row">
-        <div>
-          <div class="ticker">${item.ticker}</div>
-          <div class="name">${item.name || ''}</div>
-        </div>
-        <div class="badges">
-          <span class="badge">${item.timeframe}</span>
-          <span class="badge ${riskClass}">${item.risk}</span>
-          <span class="badge">${pct(item.confidence)}%</span>
-        </div>
+function renderCompareList() {
+  compareList.innerHTML = '';
+  if (!compareSet.size) {
+    compareList.innerHTML = `<div class="text-sm" style="color:#9ab3cc">Add tickers to compare.</div>`;
+    return;
+  }
+  compareSet.forEach(t=>{
+    const row = elNode(`
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; border:1px solid #1e2a3b; border-radius:8px; padding:6px 8px; margin-bottom:6px;">
+        <strong>${esc(t)}</strong>
+        <button class="btn" data-remove="${esc(t)}">Remove</button>
       </div>
-      <div class="conf ${lane}" aria-label="Confidence">
-        <div class="fill" style="width:${pct(item.confidence)}%"></div>
-      </div>
-      <div>${thesis}</div>
-      ${catalysts ? `<ul class="catalysts">${catalysts}</ul>` : ''}
-      ${ideaActions(item.ticker, item.name || '')}
-      <div class="compare-chart" id="${id}-wrap" style="display:none;">
-        <canvas id="${id}" height="150"></canvas>
-      </div>
-    </div>
-  `;
-}
-
-function render(json) {
-  state.screen = json;
-  $('summary').textContent = json.summary || '';
-  $('buyList').innerHTML  = (json.buy  || []).map(i=>ideaCard('buy',i)).join('') || '<div class="card">No items</div>';
-  $('holdList').innerHTML = (json.hold || []).map(i=>ideaCard('hold',i)).join('') || '<div class="card">No items</div>';
-  $('sellList').innerHTML = (json.sell || []).map(i=>ideaCard('sell',i)).join('') || '<div class="card">No items</div>';
-  $('utrList').innerHTML  = (json.underTheRadar || []).map(i=>ideaCard('buy',i)).join('') || '<div class="card">No ideas yet</div>';
-  $('disclaimers').innerHTML = (json.disclaimers || []).map(d=>`• ${d}`).join(' ');
-
-  // Wire per-card buttons
-  document.querySelectorAll('.add-watch').forEach(btn=>{
-    btn.addEventListener('click', ()=>{
-      const t = btn.dataset.t, n = btn.dataset.n;
-      if (!state.watchlist.includes(t)) state.watchlist.push(t);
-      saveWatchlist(); btn.textContent = '✓ In Watchlist';
-    });
-  });
-  document.querySelectorAll('.add-compare').forEach(btn=>{
-    btn.addEventListener('click', ()=>{
-      const t = btn.dataset.t;
-      state.compareSet.add(t);
-      openCompare();
+    `);
+    row.querySelector('[data-remove]').addEventListener('click', ()=> {
+      compareSet.delete(t);
       renderCompareList();
     });
-  });
-  document.querySelectorAll('.view-chart').forEach(btn=>{
-    btn.addEventListener('click', ()=> toggleCardChart(btn.dataset.t));
+    compareList.appendChild(row);
   });
 }
 
-function rowsForCSV() {
-  const j = state.screen || {};
-  const rows = [['Lane','Ticker','Name','Timeframe','Confidence','Risk','Thesis/Cause','Catalysts']];
-  [['Buy','buy'],['Hold','hold'],['Sell','sell']].forEach(([label,key])=>{
-    (j[key]||[]).forEach(i=>{
-      rows.push([label, i.ticker, i.name||'', i.timeframe, pct(i.confidence), i.risk, i.thesis||i.whyInteresting||'', (i.catalysts||[]).join(' | ')]);
-    });
-  });
-  (j.underTheRadar||[]).forEach(i=>{
-    rows.push(['UnderTheRadar', i.ticker, i.name||'', i.timeframe, pct(i.confidence), i.risk, i.whyInteresting||'', (i.catalysts||[]).join(' | ')]);
-  });
-  return rows;
-}
-
-// ---------- Charts ----------
-function sma(values, win){
-  const out=[]; let sum=0;
-  values.forEach((v,i)=>{ sum+=v; if(i>=win) sum-=values[i-win]; out.push(i>=win-1 ? +(sum/win).toFixed(2) : null); });
-  return out;
-}
-function rsi(values, period=14){
-  let gains=0, losses=0; const rsis=[];
-  for(let i=1;i<values.length;i++){
-    const diff=values[i]-values[i-1];
-    const gain=Math.max(0,diff), loss=Math.max(0,-diff);
-    if(i<=period){ gains+=gain; losses+=loss; rsis.push(null); }
-    else{
-      gains=(gains*(period-1)+gain)/period;
-      losses=(losses*(period-1)+loss)/period;
-      const rs = losses===0 ? 100 : 100 - (100/(1+(gains/(losses||1e-9))));
-      rsis.push(+rs.toFixed(2));
-    }
-  }
-  rsis.unshift(null);
-  return rsis;
-}
-
-async function drawChart(ticker, canvas){
-  const data = await get(`/api/series?ticker=${encodeURIComponent(ticker)}&days=180`);
-  const xs = data.series.map(p=>new Date(p.t));
-  const closes = data.series.map(p=>p.close);
-  const s20 = sma(closes,20), s50=sma(closes,50), r=rsi(closes,14);
-
-  if (state.charts.get(ticker)) { state.charts.get(ticker).destroy(); state.charts.delete(ticker); }
-
-  const ctx = canvas.getContext('2d');
-  const chart = new Chart(ctx, {
-    type:'line',
-    data:{
-      labels: xs,
-      datasets:[
-        { label:`${ticker} Close`, data:closes, yAxisID:'y', pointRadius:0, tension:.25 },
-        { label:'SMA20', data:s20, yAxisID:'y', pointRadius:0, tension:.25 },
-        { label:'SMA50', data:s50, yAxisID:'y', pointRadius:0, tension:.25 },
-        { label:'RSI14', data:r, yAxisID:'y1', pointRadius:0, tension:.25 }
-      ]
-    },
-    options:{
-      scales:{
-        x: { display:false },
-        y: { position:'left', grid:{color:'#1e2a3b'} },
-        y1:{ position:'right', min:0, max:100, ticks:{stepSize:20}, grid:{display:false} }
-      },
-      plugins:{ legend:{ labels:{ color:'#cde1f7' } } }
-    }
-  });
-  state.charts.set(ticker, chart);
-}
-
-async function toggleCardChart(ticker){
-  const wrap = $(`chart-${ticker}-wrap`);
-  if (!wrap) return;
-  const shown = wrap.style.display !== 'none';
-  if (shown) {
-    wrap.style.display = 'none';
-    const ch = state.charts.get(ticker); if (ch){ ch.destroy(); state.charts.delete(ticker); }
-  } else {
-    wrap.style.display = 'block';
-    const canvas = $(`chart-${ticker}`);
-    await drawChart(ticker, canvas);
-  }
-}
-
-// ---------- Compare Drawer ----------
-function openCompare(){ $('compareDrawer').setAttribute('aria-hidden','false'); }
-function closeCompare(){ $('compareDrawer').setAttribute('aria-hidden','true'); }
-function renderCompareList(){
-  const list = $('compareList');
-  list.innerHTML = [...state.compareSet].map(t => `
-    <div class="drawer-item">
-      <strong>${t}</strong>
-      <div>
-        <button class="smallbtn analyze" data-t="${t}">Analyze</button>
-        <button class="smallbtn remove" data-t="${t}">Remove</button>
-      </div>
-    </div>
-  `).join('') || '<div class="drawer-item">Add tickers to compare.</div>';
-
-  list.querySelectorAll('.remove').forEach(b=> b.onclick = ()=>{ state.compareSet.delete(b.dataset.t); renderCompareList(); });
-  list.querySelectorAll('.analyze').forEach(b=> b.onclick = async ()=>{
-    const json = await post('/api/analyze', { ticker: b.dataset.t });
-    renderCompareResults(b.dataset.t, json);
-  });
-}
-function renderCompareResults(label, json){
-  const container = $('compareResults');
-  const div = document.createElement('div');
-  div.className = 'compare-card';
-  const id = `cmp-${label}-chart`;
-  div.innerHTML = `
-    <div class="compare-head">
-      <strong>${label}</strong>
-      <button class="smallbtn" data-t="${label}">Chart</button>
-    </div>
-    <div>${json.summary || ''}</div>
-    <div class="compare-chart" id="${id}-wrap" style="display:none;"><canvas id="${id}" height="140"></canvas></div>
-  `;
-  container.appendChild(div);
-
-  div.querySelector('button').onclick = async ()=>{
-    const wrap = $(`${id}-wrap`);
-    const shown = wrap.style.display !== 'none';
-    if (shown){ wrap.style.display='none'; }
-    else { wrap.style.display='block'; await drawChart(label, $(`${id}`)); }
-  };
-}
-
-// ---------- Watchlist Drawer ----------
-function openWatch(){ $('watchDrawer').setAttribute('aria-hidden','false'); renderWatchlist(); }
-function closeWatch(){ $('watchDrawer').setAttribute('aria-hidden','true'); }
-function renderWatchlist(){
-  const el = $('watchItems');
-  el.innerHTML = state.watchlist.map(t => `
-    <div class="drawer-item">
-      <strong>${t}</strong>
-      <div>
-        <button class="smallbtn analyze" data-t="${t}">Analyze</button>
-        <button class="smallbtn remove" data-t="${t}">Remove</button>
-      </div>
-    </div>
-  `).join('') || '<div class="drawer-item">Your watchlist is empty.</div>';
-
-  el.querySelectorAll('.remove').forEach(b=> b.onclick = ()=>{
-    state.watchlist = state.watchlist.filter(x=>x!==b.dataset.t);
-    saveWatchlist(); renderWatchlist();
-  });
-  el.querySelectorAll('.analyze').forEach(b=> b.onclick = async ()=>{
-    const json = await post('/api/analyze', { ticker: b.dataset.t });
-    render(json);
-  });
-}
-
-// ---------- Events ----------
-$('runBtn').addEventListener('click', async ()=>{
-  const risk = $('risk').value;
-  const region = $('region').value;
-  $('summary').textContent = 'Running analysis…';
-  const json = await post('/api/screen', { risk, region });
-  render(json);
-});
-$('exportBtn').addEventListener('click', ()=>{
-  if (!state.screen) { alert('Run analysis first.'); return; }
-  downloadCSV(`tradesense_${new Date().toISOString().slice(0,10)}.csv`, rowsForCSV());
-});
-
-$('searchForm').addEventListener('submit', async (e)=>{
-  e.preventDefault();
-  const raw = $('tickerInput').value.trim().toUpperCase();
-  if (!/^[A-Z][A-Z0-9.\-]{0,9}$/.test(raw)) { alert('Enter a valid ticker (e.g., AAPL, BRK.B, RIO)'); return; }
-  $('summary').textContent = `Analyzing ${raw}…`;
-  const json = await post('/api/analyze', { ticker: raw });
-  render(json);
-});
-
-$('compareOpenBtn').onclick = ()=> { openCompare(); renderCompareList(); };
-$('compareCloseBtn').onclick = closeCompare;
-$('watchOpenBtn').onclick = openWatch;
-$('watchCloseBtn').onclick = closeWatch;
-
-$('compareForm').addEventListener('submit', (e)=>{
-  e.preventDefault();
-  const t = $('compareInput').value.trim().toUpperCase();
-  if (!/^[A-Z][A-Z0-9.\-]{0,9}$/.test(t)) { alert('Invalid ticker'); return; }
-  state.compareSet.add(t); $('compareInput').value = '';
+function addToCompare(ticker) {
+  if (!ticker) return;
+  compareSet.add(ticker.toUpperCase());
   renderCompareList();
+}
+
+async function runCompare() {
+  compareResults.innerHTML = '';
+  if (!compareSet.size) {
+    compareResults.innerHTML = `<div class="card">No tickers to compare yet.</div>`;
+    return;
+  }
+  for (const t of compareSet) {
+    const card = elNode(`
+      <div class="card" style="display:grid; gap:6px;">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <strong>${esc(t)}</strong>
+          <span class="text-sm" style="color:#9ab3cc">180d</span>
+        </div>
+        <div style="height:100px;"><canvas width="320" height="100"></canvas></div>
+      </div>
+    `);
+    compareResults.appendChild(card);
+    const canvas = card.querySelector('canvas');
+    renderSparkline(canvas, t, 180).catch(()=>{});
+    // small breath to avoid hammering provider
+    await sleep(120);
+  }
+}
+
+// -------- Watchlist (localStorage) --------
+const WATCH_KEY = 'tradesense.watch';
+function loadWatch() {
+  try {
+    const arr = JSON.parse(localStorage.getItem(WATCH_KEY) || '[]');
+    return Array.isArray(arr) ? arr : [];
+  } catch { return []; }
+}
+function saveWatch(arr) { localStorage.setItem(WATCH_KEY, JSON.stringify(arr)); }
+
+function renderWatch() {
+  const arr = loadWatch();
+  watchItems.innerHTML = '';
+  if (!arr.length) {
+    watchItems.innerHTML = `<div class="text-sm" style="color:#9ab3cc">No symbols yet.</div>`;
+    return;
+  }
+  arr.forEach(t=>{
+    const row = elNode(`
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; border:1px solid #1e2a3b; border-radius:8px; padding:6px 8px; margin-bottom:6px;">
+        <span>${esc(t)}</span>
+        <div style="display:flex; gap:6px;">
+          <button class="btn" data-analyze="${esc(t)}">Analyze</button>
+          <button class="btn" data-del="${esc(t)}">Remove</button>
+        </div>
+      </div>
+    `);
+    row.querySelector('[data-analyze]').addEventListener('click', ()=> analyzeTicker(t));
+    row.querySelector('[data-del]').addEventListener('click', ()=>{
+      const next = loadWatch().filter(x => x !== t);
+      saveWatch(next); renderWatch();
+    });
+    watchItems.appendChild(row);
+  });
+}
+
+function addToWatchlist(t) {
+  const u = (t||'').toUpperCase();
+  if (!u) return;
+  const arr = loadWatch();
+  if (!arr.includes(u)) {
+    arr.push(u); saveWatch(arr); renderWatch();
+  }
+}
+
+// -------- Wire up events --------
+runBtn?.addEventListener('click', runScreen);
+
+exportBtn?.addEventListener('click', ()=>{
+  if (!lastResult) return alert('Run an analysis first.');
+  const csv = toCSV([]);
+  download(`tradesense_${Date.now()}.csv`, toCSV(), 'text/csv');
 });
 
-// No auto-fetch on load (manual only)
+// Single ticker search
+searchForm?.addEventListener('submit', (e)=>{
+  e.preventDefault();
+  const t = tickerInput?.value || '';
+  analyzeTicker(t);
+});
+
+// Compare form
+compareForm?.addEventListener('submit', (e)=>{
+  e.preventDefault();
+  const t = (compareInput?.value || '').trim().toUpperCase();
+  if (t) addToCompare(t);
+  compareInput.value = '';
+});
+compareRunBtn?.addEventListener('click', runCompare);
+
+// Initial UI state
+renderCompareList();
+renderWatch();
+summaryEl.innerHTML = `<em>Click “Run Analysis” or analyze a specific ticker.</em>`;

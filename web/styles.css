@@ -1,28 +1,46 @@
+/* --------------------------------------------------
+   TRASESENSE GLOBAL STYLES
+-------------------------------------------------- */
 :root {
   --bg: #0b111b;
-  --panel: #0f1724;
-  --text: #cde1f7;
-  --accent: #00b7ff;
-  --buy: #2ecc71;
-  --hold: #f1c40f;
-  --sell: #e74c3c;
-  --ring: 0 0 0 2px rgba(0,183,255,.3);
-  font-family: 'Inter', sans-serif;
+  --bg-card: #0d1420;
+  --border: #1e2a3b;
+  --text: #d6e2f2;
+  --text-muted: #9ab3cc;
+  --accent: #3fa9f5;
+  --ring: 0 0 0 2px rgba(63,169,245,0.35);
+  --radius: 12px;
+  --shadow: 0 2px 12px rgba(0,0,0,0.3);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
 }
 
 body {
   background: var(--bg);
   color: var(--text);
-  margin: 0;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
 }
 
+/* --------------------------------------------------
+   HEADER / NAV
+-------------------------------------------------- */
 .topbar {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  background: var(--panel);
-  padding: 12px 20px;
-  border-bottom: 1px solid #1e2a3b;
+  background: #0d1420;
+  border-bottom: 1px solid var(--border);
+  padding: 10px 20px;
+  position: sticky;
+  top: 0;
+  z-index: 100;
 }
 
 .brand {
@@ -30,197 +48,332 @@ body {
   align-items: center;
   gap: 10px;
 }
+
 .logo {
-  width: 36px;
-  height: 36px;
+  width: 42px;
+  height: 42px;
+  border-radius: 10px;
   background: var(--accent);
-  color: #062435;
-  border-radius: 8px;
+  color: #fff;
+  font-weight: 800;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-weight: 800;
   font-size: 18px;
+  letter-spacing: 1px;
+  box-shadow: var(--shadow);
 }
+
 .title h1 {
-  margin: 0;
-  font-size: 18px;
-}
-.title p {
-  margin: 0;
-  font-size: 13px;
-  color: #90a4b7;
-}
-
-.search {
-  display: flex;
-  gap: 6px;
-}
-.search input {
-  background: #0d1420;
-  border: 1px solid #1e2a3b;
+  font-size: 20px;
+  font-weight: 700;
   color: var(--text);
-  padding: 8px 10px;
-  border-radius: 8px;
-}
-.search .btn {
-  padding: 8px 12px;
 }
 
+.title p {
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.2;
+}
+
+/* ---- Navigation ---- */
+.nav {
+  display: flex;
+  gap: 12px;
+}
+
+.navlink {
+  color: #cde1f7;
+  text-decoration: none;
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: #0f1724;
+  transition: 0.2s ease;
+  font-size: 14px;
+}
+
+.navlink:hover {
+  background: #122236;
+  color: #fff;
+}
+
+.navlink.active {
+  outline: var(--ring);
+}
+
+/* --------------------------------------------------
+   CONTAINERS & LAYOUT
+-------------------------------------------------- */
 .container {
-  padding: 20px;
-  max-width: 1100px;
-  margin: auto;
+  width: min(1200px, 95%);
+  margin: 0 auto;
+  padding: 20px 0 40px;
+  flex: 1;
+}
+
+.grid {
+  display: grid;
+  gap: 16px;
 }
 
 .controls {
   display: flex;
   gap: 12px;
-  flex-wrap: wrap;
   align-items: flex-end;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
 }
+
+.control {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 180px;
+}
+
 .control label {
-  display: block;
   font-size: 13px;
-  margin-bottom: 2px;
+  color: var(--text-muted);
 }
-.control select {
-  padding: 6px;
-  border-radius: 6px;
-  background: #0d1420;
-  border: 1px solid #1e2a3b;
+
+input, select {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
   color: var(--text);
+  font-size: 14px;
+  outline: none;
+}
+
+input:focus, select:focus {
+  outline: var(--ring);
 }
 
 .btn {
   border: none;
-  border-radius: 6px;
-  cursor: pointer;
-  background: #1e2a3b;
-  color: var(--text);
+  border-radius: 8px;
   font-weight: 600;
+  cursor: pointer;
+  transition: 0.2s;
+  font-size: 14px;
   padding: 8px 14px;
 }
+
 .btn.primary {
   background: var(--accent);
-  color: #062435;
-}
-.btn.secondary {
-  background: #162132;
-  color: var(--text);
+  color: #fff;
 }
 
-.summary {
-  margin: 20px 0;
-  font-style: italic;
-}
-
-.grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-  gap: 20px;
-}
-
-.lane h2 {
-  text-align: center;
-}
-
-.cardlist {
-  display: grid;
-  gap: 10px;
+.btn.primary:hover {
+  opacity: 0.9;
 }
 
 .card {
-  background: #0d1420;
-  border: 1px solid #1e2a3b;
-  border-radius: 10px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
   padding: 14px;
+  box-shadow: var(--shadow);
 }
-.row {
+
+/* --------------------------------------------------
+   NEWS GRID & CARDS (Landing Page)
+-------------------------------------------------- */
+.news-grid {
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.news-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
   display: flex;
-  justify-content: space-between;
+  flex-direction: column;
+  transition: transform 0.2s ease;
+}
+
+.news-card:hover {
+  transform: translateY(-4px);
+}
+
+.news-link {
+  color: inherit;
+  text-decoration: none;
+  display: grid;
+  grid-template-rows: 150px 1fr;
+  height: 100%;
+}
+
+.news-img {
+  width: 100%;
+  height: 150px;
+  object-fit: cover;
+  background: #0f1724;
+}
+
+.news-img.placeholder {
+  background: #0f1724;
+}
+
+.news-body {
+  padding: 12px;
+  display: grid;
+  gap: 6px;
+}
+
+.news-title {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.3;
+}
+
+.news-caption {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+  min-height: 34px;
+}
+
+.news-meta {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+  color: #89a2b9;
   align-items: center;
 }
-.ticker {
+
+.news-read {
+  margin-left: auto;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* --------------------------------------------------
+   TRADE ANALYSIS PAGE (shared components)
+-------------------------------------------------- */
+.section {
+  margin-top: 20px;
+}
+
+.section h2 {
   font-size: 18px;
   font-weight: 700;
+  margin-bottom: 10px;
+  color: var(--text);
 }
-.name {
-  font-size: 14px;
-  color: #90a4b7;
-}
-.badges {
-  display: flex;
-  gap: 5px;
-}
-.badge {
-  background: #162132;
-  border-radius: 6px;
-  padding: 3px 8px;
-  font-size: 12px;
-  text-transform: uppercase;
-}
-.conf {
-  margin-top: 6px;
-  height: 6px;
-  border-radius: 3px;
-  background: #1e2a3b;
-}
-.conf .fill {
-  height: 100%;
-  border-radius: 3px;
-}
-.conf.buy .fill { background: var(--buy); }
-.conf.hold .fill { background: var(--hold); }
-.conf.sell .fill { background: var(--sell); }
 
+.analysis-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+
+.stock-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.stock-card h3 {
+  margin: 0;
+  font-size: 16px;
+  color: var(--accent);
+}
+
+.stock-card p {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.conf-bar {
+  height: 6px;
+  border-radius: 4px;
+  background: #1e2a3b;
+  overflow: hidden;
+}
+
+.conf-bar-fill {
+  height: 100%;
+  background: var(--accent);
+}
+
+/* --------------------------------------------------
+   FOOTER
+-------------------------------------------------- */
 .foot {
   text-align: center;
-  color: #90a4b7;
-  margin-top: 20px;
+  color: var(--text-muted);
   font-size: 13px;
-}
-
-.btn.primary:hover,
-.btn.secondary:hover {
-  filter: brightness(1.15);
-}
-
-.drawer {
-  position: fixed;
-  inset: 0;
-  background: rgba(0,0,0,.5);
-  display: none;
-}
-.drawer[aria-hidden="false"] {
-  display: block;
-}
-.drawer-panel {
-  position: absolute;
-  right: 0;
-  top: 0;
-  bottom: 0;
-  width: 400px;
-  background: var(--panel);
-  border-left: 1px solid #1e2a3b;
-  padding: 16px;
-  overflow-y: auto;
-}
-.iconbtn {
-  background: transparent;
-  border: 1px solid #1e2a3b;
-  border-radius: 8px;
-  color: var(--text);
-  padding: 4px 8px;
-  cursor: pointer;
-}
-.smallbtn {
-  font-size: 12px;
-  border: 1px solid #1e2a3b;
-  border-radius: 6px;
+  padding: 20px;
+  border-top: 1px solid var(--border);
   background: #0d1420;
-  color: var(--text);
-  padding: 5px 7px;
-  cursor: pointer;
 }
+
+/* --------------------------------------------------
+   RESPONSIVE
+-------------------------------------------------- */
+@media (max-width: 700px) {
+  .topbar {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+  .brand { width: 100%; }
+  .nav { width: 100%; flex-wrap: wrap; gap: 8px; }
+  .controls { flex-direction: column; align-items: stretch; }
+}
+/* ----- 2-column layout for Trade Analysis ----- */
+.layout {
+  display: grid;
+  grid-template-columns: 1fr 340px; /* main + sidebar */
+  gap: 20px;
+}
+
+.content { min-width: 0; } /* allow grids to shrink properly */
+
+/* Sidebar */
+.sidebar { display: flex; flex-direction: column; gap: 16px; }
+.sidebar .card.sticky { position: sticky; top: 16px; }
+
+/* Lane grid: cards flow vertically in one column by default */
+.lane-grid {
+  grid-template-columns: 1fr;
+}
+
+/* Confidence bar (used inside stock cards) */
+.conf-bar {
+  height: 6px;
+  border-radius: 4px;
+  background: #1e2a3b;
+  overflow: hidden;
+  margin-top: 6px;
+}
+.conf-bar-fill {
+  height: 100%;
+  background: var(--accent);
+  width: 0%;
+}
+
+/* Optional: stock card layout tweaks if app.js injects canvas/charts */
+.stock-card {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+/* Responsive: stack on small screens */
+@media (max-width: 980px) {
+  .layout {
+    grid-template-columns: 1fr;
+  }
+  .sidebar .card.sticky { position: static; }
+}
+
 
