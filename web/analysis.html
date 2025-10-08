@@ -9,25 +9,30 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
 </head>
 <body>
-  <!-- Header / Nav -->
+  <!-- Header -->
   <header class="topbar">
-    <div class="brand">
-      <div class="logo">TS</div>
-      <div class="title">
-        <h1>TradeSense</h1>
-        <p>Groq-powered market reasoning — Buy • Hold • Sell</p>
+    <div class="container row">
+      <div class="brand">
+        <div class="logo">TS</div>
+        <div class="title">
+          <h1>TradeSense</h1>
+          <p>Groq-powered market reasoning</p>
+        </div>
       </div>
-    </div>
 
-    <nav class="nav">
-      <a class="navlink" href="./index.html">Home</a>
-      <a class="navlink active" href="./analysis.html">Trade Analysis</a>
-    </nav>
+      <nav class="nav">
+        <a class="navlink" href="./index.html">Home</a>
+        <a class="navlink active" href="./analysis.html">Trade Analysis</a>
+        <button id="themeBtn" class="theme-toggle" type="button">
+          <span class="dot"></span> Theme
+        </button>
+      </nav>
+    </div>
   </header>
 
-  <!-- Main 2-column layout: content + right sidebar -->
+  <!-- Main two-column layout -->
   <main class="container layout">
-    <!-- Left: controls + results -->
+    <!-- Left column: controls + results -->
     <section class="content">
       <!-- Controls -->
       <section class="controls">
@@ -51,7 +56,7 @@
         <button id="runBtn" class="btn primary">Run Analysis</button>
         <button id="exportBtn" class="btn">Export CSV</button>
 
-        <div class="control" style="margin-left:auto; min-width:280px;">
+        <div class="control" style="min-width:280px; margin-left:auto;">
           <label for="tickerInput">Analyze a specific ticker</label>
           <form id="searchForm" class="search" style="display:flex; gap:8px;">
             <input id="tickerInput" placeholder="e.g., NVDA, AAPL, BRK.B" autocomplete="off"/>
@@ -61,44 +66,45 @@
       </section>
 
       <!-- Summary -->
-      <section class="card" style="margin-bottom:16px;">
-        <div id="summary"><em>Click “Run Analysis” to fetch the latest ideas.</em></div>
+      <section class="card">
+        <div id="summary" class="summary"><em>Click “Run Analysis” or analyze a specific ticker.</em></div>
       </section>
 
       <!-- Lanes -->
-      <section class="grid analysis-grid">
+      <section class="analysis-grid">
         <div class="section">
           <h2>Buy</h2>
-          <div id="buyList" class="grid lane-grid"></div>
+          <div id="buyList" class="lane-grid"></div>
         </div>
 
         <div class="section">
           <h2>Hold</h2>
-          <div id="holdList" class="grid lane-grid"></div>
+          <div id="holdList" class="lane-grid"></div>
         </div>
 
         <div class="section">
           <h2>Sell</h2>
-          <div id="sellList" class="grid lane-grid"></div>
+          <div id="sellList" class="lane-grid"></div>
         </div>
       </section>
 
       <!-- Under the Radar -->
       <section class="section">
         <h2>Under-the-Radar Ideas</h2>
-        <div id="utrList" class="grid lane-grid"></div>
+        <div id="utrList" class="lane-grid"></div>
       </section>
 
+      <!-- Footer / disclaimers + badge -->
       <footer class="foot">
-        <div id="disclaimers" style="margin-bottom:6px;"></div>
-        <div id="badge" class="navlink" style="display:inline-block;" hidden>Offline (mock data)</div>
+        <div id="disclaimers"></div>
+        <span id="badge" hidden>Offline (mock data)</span>
       </footer>
     </section>
 
-    <!-- Right: persistent sidebar (Compare + Watchlist) -->
+    <!-- Right column: sidebar -->
     <aside class="sidebar">
       <div class="card sticky">
-        <h3 style="margin-bottom:8px;">Compare Tickers</h3>
+        <h3 style="margin:0 0 8px;">Compare Tickers</h3>
         <form id="compareForm" class="drawer-row" style="display:flex; gap:8px; margin-bottom:10px;">
           <input id="compareInput" placeholder="Add ticker (e.g., AAPL)" />
           <button id="compareRunBtn" class="btn primary" type="button">Run Compare</button>
@@ -108,18 +114,37 @@
       </div>
 
       <div class="card sticky">
-        <h3 style="margin-bottom:8px;">Watchlist</h3>
+        <h3 style="margin:0 0 8px;">Watchlist</h3>
         <div id="watchItems" class="drawer-list"></div>
       </div>
     </aside>
   </main>
 
-  <!-- Hidden drawers kept for compatibility (app.js might reference them) -->
+  <!-- (Optional legacy drawers kept hidden for compatibility) -->
   <aside id="compareDrawer" class="drawer" aria-hidden="true" hidden></aside>
   <aside id="watchDrawer" class="drawer" aria-hidden="true" hidden></aside>
 
+  <!-- Theme toggle logic -->
+  <script>
+  (() => {
+    const root = document.documentElement;
+    const key = 'tradesense.theme';
+    const saved = localStorage.getItem(key);
+    if (saved) root.setAttribute('data-theme', saved);
+    const btn = document.getElementById('themeBtn');
+    if (btn) {
+      btn.addEventListener('click', () => {
+        const next = root.getAttribute('data-theme') === 'light' ? '' : 'light';
+        if (next) root.setAttribute('data-theme', next); else root.removeAttribute('data-theme');
+        if (next) localStorage.setItem(key, next); else localStorage.removeItem(key);
+      });
+    }
+  })();
+  </script>
+
   <!-- App logic -->
-  <script type="module" src="./app.js?v=4"></script>
+  <script type="module" src="./app.js?v=8"></script>
 </body>
 </html>
+
 

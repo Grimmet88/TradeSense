@@ -1,46 +1,71 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8"/>
+  <meta charset="utf-8" />
   <title>TradeSense — Market News</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="./styles.css"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
+  <!-- Header -->
   <header class="topbar">
-    <div class="brand">
-      <div class="logo">TS</div>
-      <div class="title">
-        <h1>TradeSense</h1>
-        <p>Groq-powered market reasoning</p>
+    <div class="container row">
+      <div class="brand">
+        <div class="logo">TS</div>
+        <div class="title">
+          <h1>TradeSense</h1>
+          <p>Groq-powered market reasoning</p>
+        </div>
       </div>
-    </div>
 
-    <nav class="nav">
-      <a class="navlink active" href="./index.html">Home</a>
-      <a class="navlink" href="./analysis.html">Trade Analysis</a>
-    </nav>
+      <nav class="nav">
+        <a class="navlink active" href="./index.html">Home</a>
+        <a class="navlink" href="./analysis.html">Trade Analysis</a>
+        <button id="themeBtn" class="theme-toggle" type="button">
+          <span class="dot"></span> Theme
+        </button>
+      </nav>
+    </div>
   </header>
 
-  <main class="container">
-    <section class="controls">
-      <div class="control">
+  <!-- Content -->
+  <main class="container news-wrap">
+    <!-- Controls -->
+    <section class="controls card" style="display:flex;align-items:end;">
+      <div class="control" style="min-width:260px">
         <label for="newsSearch">Search news</label>
-        <input id="newsSearch" placeholder="e.g., AI, Fed, energy" />
+        <input id="newsSearch" type="text" placeholder="AI chips, rate cuts, oil, small caps…" />
       </div>
-      <button id="newsRefresh" class="btn primary">Refresh</button>
+      <button id="newsRefresh" class="btn primary" type="button">Refresh</button>
     </section>
 
-    <section class="grid news-grid" id="newsGrid">
-      <!-- cards injected here -->
+    <!-- Grid -->
+    <section class="section">
+      <h2>Latest Market Headlines</h2>
+      <div id="newsGrid"></div>
     </section>
   </main>
 
-  <footer class="foot">
-    <small>News via Reuters, CNBC, Yahoo Finance. Headlines may link to external sites.</small>
-  </footer>
+  <!-- Theme toggle logic -->
+  <script>
+  (() => {
+    const root = document.documentElement;
+    const key = 'tradesense.theme';
+    const saved = localStorage.getItem(key);
+    if (saved) root.setAttribute('data-theme', saved);
+    const btn = document.getElementById('themeBtn');
+    if (btn) {
+      btn.addEventListener('click', () => {
+        const next = root.getAttribute('data-theme') === 'light' ? '' : 'light';
+        if (next) root.setAttribute('data-theme', next); else root.removeAttribute('data-theme');
+        if (next) localStorage.setItem(key, next); else localStorage.removeItem(key);
+      });
+    }
+  })();
+  </script>
 
-  <script type="module" src="./news.js"></script>
+  <!-- Page logic -->
+  <script type="module" src="./news.js?v=2"></script>
 </body>
 </html>

@@ -1,81 +1,62 @@
 // server/server.js
-// ---------------- Environment load (from /server/.env) ----------------
+// TradeSense backend with runtime Groq model resolver
+
 import express from 'express';
 import cors from 'cors';
 import fetch from 'node-fetch';
-import crypto from 'crypto';
 import path from 'path';
+import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import { XMLParser } from 'fast-xml-parser';
 import { SYSTEM_PROMPT, makeScreenPrompt, makeSingleTickerPrompt } from './prompts.js';
 
-// Resolve paths for ESM and load env from /server/.env
+// ---------- Env & paths ----------
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// Load .env from /server/.env
 dotenv.config({ path: path.join(__dirname, '.env') });
 
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '1mb' }));
 
-// ---------------- Config ----------------
+// Log every request (helpful for debugging)
+app.use((req, _res, next) => {
+  console.log(`[REQ] ${req.method} ${req.url}`);
+  next();
+});
+
+// ---------- Config ----------
 const {
-  // Groq
   GROQ_API_KEY,
   GROQ_BASE_URL = 'https://api.groq.com/openai/v1',
-  GROQ_MODEL = 'llama-3.1-70b-instruct', // <- supported default
+  // If GROQ_MODEL is unset, we will auto-resolve from /models
+  GROQ_MODEL = '',
   MOCK_FALLBACK = 'true',
+  PORT = '8787',
 
-  // Server
-  PORT = 8787,
-
-  // Series providers
-  SERIES_PROVIDER = 'yahoo',            // yahoo | alphavantage | polygon
-  POLYGON_API_KEY,
+  // Price series
+  SERIES_PROVIDER = 'yahoo',   // yahoo | alphavantage | polygon
   ALPHAVANTAGE_API_KEY,
-  SERIES_CACHE_TTL = '900',             // seconds
+  POLYGON_API_KEY,
+  SERIES_CACHE_TTL = '900',    // seconds
 
-  // News cache
-  NEWS_CACHE_TTL = '300',               // seconds
+  // News
+  NEWS_CACHE_TTL = '300',      // seconds
 } = process.env;
 
-console.log('GROQ key loaded?', GROQ_API_KEY ? 'yes' : 'NO (mock fallback may trigger)');
+console.log(`GROQ key loaded? ${GROQ_API_KEY ? 'yes' : 'NO'} (key starts with: ${(GROQ_API_KEY || '').slice(0,5)})`);
+console.log(`Using Groq Base URL: ${GROQ_BASE_URL}`);
+if (GROQ_MODEL) console.log(`Using primary Groq Model: ${GROQ_MODEL}`);
 
+// ---------- Static web dir ----------
 const WEB_DIR = path.join(__dirname, '..', 'web');
+
+// ---------- Helpers ----------
 const TICKER_RE = /^[A-Z][A-Z0-9.\-]{0,9}$/;
 
-// ---------------- Helpers ----------------
-async function groqJSON(messages) {
-  if (!GROQ_API_KEY) throw new Error('Missing GROQ_API_KEY');
-  const res = await fetch(`${GROQ_BASE_URL}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${GROQ_API_KEY}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: GROQ_MODEL,
-      temperature: 0.3,
-      response_format: { type: 'json_object' },
-      messages,
-    }),
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    if (text.includes('model_decommissioned')) {
-      throw new Error(
-        `Groq says model is decommissioned. Set GROQ_MODEL in server/.env to a supported model. Raw: ${text}`
-      );
-    }
-    throw new Error(`Groq ${res.status}: ${text}`);
-  }
-  const data = await res.json();
-  const content = data?.choices?.[0]?.message?.content ?? '{}';
-  return JSON.parse(content);
-}
-
-// Mock payload for UX continuity when GROQ fails
 const MOCK = {
   summary: 'Mixed risk-on tone; mega-cap tech consolidating while cyclicals bid.',
   buy: [
@@ -92,54 +73,143 @@ const MOCK = {
     { ticker: 'INMD', name: 'InMode', whyInteresting: 'High-margin medtech with new platform cycle.', timeframe: 'medium', confidence: 65, risk: 'medium', catalysts: ['Reg approvals','Intl expansion'] },
     { ticker: 'ASO', name: 'Academy Sports + Outdoors', whyInteresting: 'Omnichannel retail; resilient cash flows.', timeframe: 'medium', confidence: 63, risk: 'medium', catalysts: ['Comp sales','New stores'] }
   ],
-  disclaimers: ['This is not financial advice.', 'Do your own research.']
+  disclaimers: [
+    'This is not financial advice.',
+    'Do your own research.',
+    'Past performance is not indicative of future results.',
+    'Investment involves risks, including the possible loss of principal.'
+  ]
 };
 
-// Add explicit mock flag to responses so UI can show/hide the badge deterministically
-function withMockFlag(payload, isMock) {
-  try { return { ...payload, mock: !!isMock }; }
-  catch { return { mock: !!isMock }; }
+function withMockFlag(payload, isMock, modelUsed = '') {
+  try { return { ...payload, mock: !!isMock, model: modelUsed || RESOLVED_GROQ_MODEL || GROQ_MODEL || 'unknown' }; }
+  catch { return { mock: !!isMock, model: modelUsed || RESOLVED_GROQ_MODEL || GROQ_MODEL || 'unknown' }; }
 }
 
-// ---------------- GROQ-backed endpoints ----------------
-app.post('/api/screen', async (req, res) => {
-  const { risk = 'medium', region = 'US' } = req.body || {};
-  try {
-    const json = await groqJSON([
-      { role: 'system', content: SYSTEM_PROMPT },
-      { role: 'user', content: makeScreenPrompt({ risk, region }) },
-    ]);
-    return res.json(withMockFlag(json, false));
-  } catch (err) {
-    console.error('[screen]', err.message);
-    if (String(MOCK_FALLBACK).toLowerCase() === 'true') {
-      return res.json(withMockFlag(MOCK, true));
-    }
-    return res.status(500).json({ error: 'Model error' });
-  }
-});
+// ---------- Groq model resolver ----------
+let RESOLVED_GROQ_MODEL = GROQ_MODEL || null;
 
-app.post('/api/analyze', async (req, res) => {
-  try {
-    const ticker = String(req.body?.ticker || '').toUpperCase().trim();
-    if (!TICKER_RE.test(ticker)) {
-      return res.status(400).json({ error: 'Provide a valid ticker (e.g., AAPL, BRK.B, RIO).' });
-    }
-    const json = await groqJSON([
-      { role: 'system', content: SYSTEM_PROMPT },
-      { role: 'user', content: makeSingleTickerPrompt(ticker) },
-    ]);
-    return res.json(withMockFlag(json, false));
-  } catch (err) {
-    console.error('[analyze]', err.message);
-    if (String(MOCK_FALLBACK).toLowerCase() === 'true') {
-      return res.json(withMockFlag(MOCK, true));
-    }
-    return res.status(500).json({ error: 'Model error' });
-  }
-});
+// Preference list — we pick the first that your key actually has.
+// (Order matters; add/remove as Groq evolves.)
+const PREFERRED_MODELS = [
+  'llama-3.2-90b-text-preview',
+  'llama-3.2-11b-text-preview',
+  'llama-3.1-70b-instruct',
+  'llama-3.1-8b-instruct',
+  'mixtral-8x7b-32768',
+  'gemma-7b-it'
+];
 
-// ---------------- Price series providers ----------------
+async function listGroqModels() {
+  const r = await fetch(`${GROQ_BASE_URL}/models`, {
+    headers: { Authorization: `Bearer ${GROQ_API_KEY}` }
+  });
+  const raw = await r.text().catch(() => '');
+  if (!r.ok) {
+    console.error('[Groq List Models]', r.status, raw.slice(0, 200));
+    throw new Error(`List models failed: ${r.status}`);
+  }
+  let j;
+  try { j = JSON.parse(raw); } catch { throw new Error('Models list parse error'); }
+  const ids = (j?.data || []).map(m => m.id);
+  return ids;
+}
+
+async function resolveGroqModel() {
+  if (RESOLVED_GROQ_MODEL) return RESOLVED_GROQ_MODEL;
+  try {
+    const ids = await listGroqModels();
+    const pick = PREFERRED_MODELS.find(id => ids.includes(id)) || ids[0];
+    if (!pick) throw new Error('No models available for this key.');
+    RESOLVED_GROQ_MODEL = pick;
+    console.log(`[Groq] Auto-resolved model: ${RESOLVED_GROQ_MODEL}`);
+    return RESOLVED_GROQ_MODEL;
+  } catch (e) {
+    console.error('[Groq] Model resolve error:', e.message);
+    throw e;
+  }
+}
+
+async function groqJSON(messages) {
+  if (!GROQ_API_KEY) throw new Error('Missing GROQ_API_KEY');
+
+  // pick a starting model (configured or auto)
+  let model = RESOLVED_GROQ_MODEL || (GROQ_MODEL || null);
+  if (!model) model = await resolveGroqModel();
+
+  const callOnce = async (modelId) => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000); // 15s
+
+    const body = {
+      model: modelId,
+      temperature: 0.3,
+      response_format: { type: 'json_object' },
+      messages,
+    };
+
+    console.log(`[Groq] Attempt 1 with model: ${modelId}`);
+    let res, raw = '';
+    try {
+      res = await fetch(`${GROQ_BASE_URL}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${GROQ_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+      raw = await res.text().catch(() => '');
+    } catch (e) {
+      clearTimeout(timeout);
+      if (e.name === 'AbortError') throw new Error('Groq request timed out');
+      throw e;
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    if (!res.ok) {
+      console.error(`[Groq Error] Raw response for model ${modelId}: ${raw}\n`);
+      const lower = raw.toLowerCase();
+      const decommissioned = lower.includes('decommissioned') || lower.includes('does not exist');
+      const unauthorized = lower.includes('invalid api key') || lower.includes('unauthorized');
+
+      if (unauthorized) throw new Error('Groq auth failed. Check GROQ_API_KEY and account limits.');
+      if (decommissioned) {
+        console.log(`[Groq] Primary model '${modelId}' failed. Attempting fallback…`);
+        const available = await listGroqModels();
+        const next = PREFERRED_MODELS.find(id => id !== modelId && available.includes(id)) ||
+                     available.find(id => id !== modelId);
+        if (next) {
+          console.log(`[Groq] Attempt 2 with model: ${next}`);
+          RESOLVED_GROQ_MODEL = next;
+          return await callOnce(next);
+        }
+        throw new Error(`Groq model '${modelId}' is decommissioned or invalid/inaccessible. No more fallback models.`);
+      }
+      throw new Error(`Groq ${res.status}: ${raw.slice(0, 240)}`);
+    }
+
+    let j;
+    try { j = JSON.parse(raw); }
+    catch {
+      console.error('[Groq] Non-JSON top-level body:', raw.slice(0, 300));
+      throw new Error('Groq returned non-JSON body');
+    }
+
+    const content = j?.choices?.[0]?.message?.content ?? '{}';
+    try { return JSON.parse(content); }
+    catch {
+      console.error('[Groq] JSON.parse(content) failed:', String(content).slice(0, 400));
+      throw new Error('Groq content is not valid JSON. Check prompt for JSON-only output.');
+    }
+  };
+
+  return callOnce(model);
+}
+
+// ---------- Series providers ----------
 function toSeries(ticker, rows) {
   return {
     ticker,
@@ -163,7 +233,7 @@ async function fetchSeriesYahoo(ticker, days) {
   return toSeries(ticker, rows.slice(-days));
 }
 
-// Alpha Vantage (free key; rate-limited)
+// Alpha Vantage
 async function fetchSeriesAlphaVantage(ticker, days) {
   if (!ALPHAVANTAGE_API_KEY) throw new Error('Missing ALPHAVANTAGE_API_KEY');
   const url = `https://www.alphavantage.co/query?function=TIME_SERIES_DAILY_ADJUSTED&symbol=${encodeURIComponent(ticker)}&outputsize=compact&apikey=${ALPHAVANTAGE_API_KEY}`;
@@ -179,11 +249,11 @@ async function fetchSeriesAlphaVantage(ticker, days) {
   return toSeries(ticker, rows);
 }
 
-// Polygon (paid/free trial)
+// Polygon
 async function fetchSeriesPolygon(ticker, days) {
   if (!POLYGON_API_KEY) throw new Error('Missing POLYGON_API_KEY');
   const end = new Date();
-  const start = new Date(end.getTime() - (days + 5) * 24 * 3600 * 1000); // buffer for weekends/holidays
+  const start = new Date(end.getTime() - (days + 5) * 24 * 3600 * 1000);
   const fmt = (d) => d.toISOString().slice(0, 10);
   const url = `https://api.polygon.io/v2/aggs/ticker/${encodeURIComponent(ticker)}/range/1/day/${fmt(start)}/${fmt(end)}?adjusted=true&sort=asc&limit=50000&apiKey=${POLYGON_API_KEY}`;
   const res = await fetch(url);
@@ -193,11 +263,11 @@ async function fetchSeriesPolygon(ticker, days) {
   return toSeries(ticker, rows);
 }
 
-// Cache + lightweight rate limiter
+// Cache + basic per-ticker throttle
 const seriesCache = new Map(); // key -> {expires, data}
 const lastHit = new Map();     // ticker -> timestamp
 function cacheGet(key) { const v = seriesCache.get(key); if (!v) return null; if (Date.now() > v.expires) { seriesCache.delete(key); return null; } return v.data; }
-function cacheSet(key, data, ttl) { seriesCache.set(key, { expires: Date.now() + (ttl * 1000), data }); }
+function cacheSet(key, data, ttl) { seriesCache.set(key, { expires: Date.now() + ttl * 1000, data }); }
 function rateLimitMs(ms = 10000) {
   return (req, res, next) => {
     const tkr = String(req.query.ticker || '').toUpperCase();
@@ -209,7 +279,114 @@ function rateLimitMs(ms = 10000) {
   };
 }
 
-// /api/series (real data)
+// ---------- News (RSS) ----------
+const NEWS_SOURCES = [
+  { name: 'Reuters Business', url: 'https://feeds.reuters.com/reuters/businessNews' },
+  { name: 'CNBC Markets',    url: 'https://www.cnbc.com/id/100003114/device/rss/rss.html' },
+  { name: 'Yahoo Finance',   url: 'https://finance.yahoo.com/news/rssindex' },
+];
+
+const xmlParser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '@_' });
+
+function pickImageFromItem(item) {
+  const media = item['media:content'] || item['media:thumbnail'];
+  if (media && media['@_url']) return media['@_url'];
+  if (Array.isArray(media) && media[0]?.['@_url']) return media[0]['@_url'];
+  if (item.enclosure && item.enclosure['@_url']) return item.enclosure['@_url'];
+  return '/news-placeholder.png';
+}
+function domainFromLink(link = '') { try { return new URL(link).hostname.replace(/^www\./, ''); } catch { return ''; } }
+function dedupeByLink(items) { const seen = new Set(); return items.filter(i => (i.link && !seen.has(i.link)) ? (seen.add(i.link), true) : false); }
+
+async function fetchOneRss({ name, url }) {
+  const res = await fetch(url, { headers: { 'User-Agent': 'TradeSense/1.0' } });
+  if (!res.ok) throw new Error(`RSS ${name} ${res.status}`);
+  const xml = await res.text();
+  const j = xmlParser.parse(xml);
+  const channel = j?.rss?.channel || j?.feed;
+  const items = channel?.item || channel?.entry || [];
+  return (Array.isArray(items) ? items : [items]).map(it => {
+    const link = it.link?.href || it.link || it.guid || '';
+    const title = it.title?._text || it.title || '';
+    const desc = it.description?._text || it.description || it.summary || '';
+    const pub = it.pubDate || it.published || it.updated || null;
+    return {
+      source: name,
+      title: String(title).trim(),
+      description: String(desc).replace(/<[^>]+>/g, '').trim(),
+      link: typeof link === 'string' ? link : (link?.['#text'] || ''),
+      publishedAt: pub ? new Date(pub).getTime() : Date.now(),
+      image: pickImageFromItem(it),
+      domain: '' // filled below
+    };
+  }).map(x => ({ ...x, domain: domainFromLink(x.link) }));
+}
+
+// tiny news cache
+const newsCache = new Map(); // key -> {expires, data}
+function newsCacheGet(key){ const v=newsCache.get(key); if(!v) return null; if(Date.now()>v.expires){newsCache.delete(key); return null;} return v.data; }
+function newsCacheSet(key,data,ttl){ newsCache.set(key,{expires:Date.now()+ttl*1000,data}); }
+
+// ---------- Routes ----------
+
+// Models debug (list what your key can use)
+app.get('/api/debug/models', async (_req, res) => {
+  try {
+    const r = await fetch(`${GROQ_BASE_URL}/models`, {
+      headers: { Authorization: `Bearer ${GROQ_API_KEY}` }
+    });
+    const text = await r.text();
+    res.status(r.status).type('application/json').send(text);
+  } catch (e) {
+    res.status(500).json({ error: String(e.message) });
+  }
+});
+
+// Screen (market-wide recommendations)
+app.post('/api/screen', async (req, res) => {
+  const { risk = 'medium', region = 'US' } = req.body || {};
+  try {
+    const json = await groqJSON([
+      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'user', content: makeScreenPrompt({ risk, region }) },
+    ]);
+    return res.json(withMockFlag(json, false));
+  } catch (err) {
+    console.error('Error in /api/screen:', err.message);
+    if ((MOCK_FALLBACK || 'true').toLowerCase() === 'true') {
+      return res.json(withMockFlag({
+        ...MOCK,
+        summary: `[MOCK DATA DUE TO API ERROR]: ${err.message}\n` + MOCK.summary
+      }, true));
+    }
+    return res.status(502).json({ error: err.message, model: RESOLVED_GROQ_MODEL || GROQ_MODEL });
+  }
+});
+
+// Analyze single ticker
+app.post('/api/analyze', async (req, res) => {
+  try {
+    const ticker = String(req.body?.ticker || '').toUpperCase().trim();
+    if (!TICKER_RE.test(ticker)) return res.status(400).json({ error: 'Provide a valid ticker (e.g., AAPL, BRK.B).' });
+
+    const json = await groqJSON([
+      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'user', content: makeSingleTickerPrompt(ticker) },
+    ]);
+    return res.json(withMockFlag(json, false));
+  } catch (err) {
+    console.error('Error in /api/analyze:', err.message);
+    if ((MOCK_FALLBACK || 'true').toLowerCase() === 'true') {
+      return res.json(withMockFlag({
+        ...MOCK,
+        summary: `[MOCK DATA DUE TO API ERROR]: ${err.message}\n` + MOCK.summary
+      }, true));
+    }
+    return res.status(502).json({ error: err.message, model: RESOLVED_GROQ_MODEL || GROQ_MODEL });
+  }
+});
+
+// Price series
 app.get('/api/series', rateLimitMs(10000), async (req, res) => {
   try {
     const ticker = String(req.query.ticker || '').toUpperCase();
@@ -233,59 +410,7 @@ app.get('/api/series', rateLimitMs(10000), async (req, res) => {
   }
 });
 
-// ---------------- News (RSS) with small cache ----------------
-const NEWS_SOURCES = [
-  { name: 'Reuters Business', url: 'https://feeds.reuters.com/reuters/businessNews' },
-  { name: 'CNBC Markets',    url: 'https://www.cnbc.com/id/100003114/device/rss/rss.html' },
-  { name: 'Yahoo Finance',   url: 'https://finance.yahoo.com/news/rssindex' },
-];
-
-const xmlParser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '@_' });
-function pickImageFromItem(item) {
-  const media = item['media:content'] || item['media:thumbnail'];
-  if (media && media['@_url']) return media['@_url'];
-  if (Array.isArray(media) && media[0]?.['@_url']) return media[0]['@_url'];
-  if (item.enclosure && item.enclosure['@_url']) return item.enclosure['@_url'];
-  return '/news-placeholder.png';
-}
-function domainFromLink(link = '') { try { return new URL(link).hostname.replace(/^www\./,''); } catch { return ''; } }
-async function fetchOneRss({ name, url }) {
-  const res = await fetch(url, { headers: { 'User-Agent': 'TradeSense/1.0' } });
-  if (!res.ok) throw new Error(`RSS ${name} ${res.status}`);
-  const xml = await res.text();
-  const j = xmlParser.parse(xml);
-  const channel = j?.rss?.channel || j?.feed;
-  const items = channel?.item || channel?.entry || [];
-  return (Array.isArray(items) ? items : [items]).map(it => {
-    const link = it.link?.href || it.link || it.guid || '';
-    const title = it.title?._text || it.title || '';
-    const desc = it.description?._text || it.description || it.summary || '';
-    const pub = it.pubDate || it.published || it.updated || null;
-    return {
-      source: name,
-      title: String(title).trim(),
-      description: String(desc).replace(/<[^>]+>/g,'').trim(),
-      link: typeof link === 'string' ? link : (link?.['#text'] || ''),
-      publishedAt: pub ? new Date(pub).getTime() : Date.now(),
-      image: pickImageFromItem(it),
-      domain: '' // fill next
-    };
-  }).map(x => ({ ...x, domain: domainFromLink(x.link) }));
-}
-function dedupeByLink(items) {
-  const seen = new Set();
-  return items.filter(i => {
-    if (!i.link || seen.has(i.link)) return false;
-    seen.add(i.link);
-    return true;
-  });
-}
-// Tiny cache
-const newsCache = new Map(); // key -> {expires, data}
-function newsCacheGet(key){ const v=newsCache.get(key); if(!v) return null; if(Date.now()>v.expires){newsCache.delete(key); return null;} return v.data; }
-function newsCacheSet(key,data,ttl){ newsCache.set(key,{expires:Date.now()+ttl*1000,data}); }
-
-// GET /api/news?limit=18&q=optional
+// News
 app.get('/api/news', async (req, res) => {
   const limit = Math.max(6, Math.min(50, Number(req.query.limit || 18)));
   const q = String(req.query.q || '').toLowerCase().trim();
@@ -317,11 +442,11 @@ app.get('/api/news', async (req, res) => {
   }
 });
 
-// ---------------- Health & static hosting ----------------
-app.get('/health', (req, res) => res.json({ ok: true }));
+// Health & static
+app.get('/health', (_req, res) => res.json({ ok: true }));
 app.use('/', express.static(WEB_DIR));
 
-// ---------------- Start ----------------
+// Start server
 app.listen(Number(PORT), () => {
   console.log(`TradeSense backend → http://localhost:${PORT}`);
 });

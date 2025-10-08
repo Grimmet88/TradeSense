@@ -1,408 +1,245 @@
-// web/app.js
-/* TradeSense – Analysis UI logic (Buy/Hold/Sell, single-ticker analyze, compare, watchlist) */
+// web/app.js — charts removed, confidence bars restored
 
 const $ = (id) => document.getElementById(id);
 
-// Controls / panes
-const riskSel = $('risk');
-const regionSel = $('region');
+// Controls
+const riskEl = $('risk');
+const regionEl = $('region');
 const runBtn = $('runBtn');
 const exportBtn = $('exportBtn');
+const searchForm = $('searchForm');
+const tickerInput = $('tickerInput');
 
-const summaryEl = $('summary');
+// Lanes
 const buyList = $('buyList');
 const holdList = $('holdList');
 const sellList = $('sellList');
 const utrList = $('utrList');
+
+// Misc
+const summaryEl = $('summary');
 const disclaimersEl = $('disclaimers');
 const badgeEl = $('badge');
 
-// Search single ticker
-const searchForm = $('searchForm');
-const tickerInput = $('tickerInput');
-
-// Right sidebar: compare + watchlist
+// Sidebar (compare & watchlist)
 const compareForm = $('compareForm');
 const compareInput = $('compareInput');
 const compareRunBtn = $('compareRunBtn');
 const compareList = $('compareList');
 const compareResults = $('compareResults');
-
 const watchItems = $('watchItems');
 
-let lastResult = null; // keep most-recent screen/analyze payload for export, etc.
+// Local state
+let lastResult = null;
+let watchlist = JSON.parse(localStorage.getItem('ts.watchlist') || '[]');
+let compareTickers = [];
 
-// -------- Utilities --------
-function fmtPct(n) { return `${Math.max(0, Math.min(100, Math.round(n)))}%`; }
-function esc(s='') { return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
-function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
-
-// cache tiny GETs (per page life)
-const mem = new Map();
-async function getJSON(url) {
-  if (mem.has(url)) return mem.get(url);
-  const p = fetch(url, { headers: { 'Accept': 'application/json' } }).then(async r => {
-    const j = await r.json();
-    if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
-    return j;
-  });
-  mem.set(url, p);
-  return p;
+// -------------------- helpers --------------------
+function esc(s = '') {
+  return String(s)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
 }
 
+function confBarHTML(conf = 0) {
+  const pct = Math.max(0, Math.min(100, Number(conf) || 0));
+  return `
+    <div class="conf-bar">
+      <div class="conf-bar-fill" style="width:${pct}%"></div>
+    </div>
+  `;
+}
+
+function stockCardHTML(s) {
+  const tkr = esc(s.ticker || '');
+  const name = esc(s.name || '');
+  const thesis = esc(s.thesis || s.whyInteresting || '');
+  const tf = esc(s.timeframe || '');
+  const risk = esc(s.risk || '');
+  const conf = Number(s.confidence || 0);
+  const cats = Array.isArray(s.catalysts) ? s.catalysts.map(esc).join('; ') : '';
+
+  return `
+    <div class="stock-card">
+      <div class="stock-head">
+        <div class="stock-left">
+          <a href="https://finance.yahoo.com/quote/${tkr}" target="_blank" rel="noopener">${tkr}</a>
+          <span>${name}</span>
+        </div>
+        <div class="stock-meta">${tf || '—'} • ${risk || '—'}</div>
+      </div>
+
+      <p class="thesis">${thesis}</p>
+      ${cats ? `<p class="catalysts"><b>Catalysts:</b> ${cats}</p>` : ''}
+
+      ${confBarHTML(conf)}
+
+      <div class="actions">
+        <button class="btn" data-watch="${tkr}">+ Watch</button>
+        <button class="btn" data-compare="${tkr}">+ Compare</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderLane(listEl, items) {
+  listEl.innerHTML = items.map(stockCardHTML).join('');
+  // wire buttons
+  listEl.querySelectorAll('[data-watch]').forEach(b =>
+    b.addEventListener('click', () => addToWatch(b.getAttribute('data-watch')))
+  );
+  listEl.querySelectorAll('[data-compare]').forEach(b =>
+    b.addEventListener('click', () => addCompareTicker(b.getAttribute('data-compare')))
+  );
+}
+
+function renderAll(json) {
+  lastResult = json;
+
+  summaryEl.textContent = json.summary || '';
+  renderLane(buyList, json.buy || []);
+  renderLane(holdList, json.hold || []);
+  renderLane(sellList, json.sell || []);
+  renderLane(utrList, json.underTheRadar || []);
+
+  // disclaimers
+  disclaimersEl.innerHTML = (json.disclaimers || [])
+    .map(d => `<div>${esc(d)}</div>`)
+    .join('');
+
+  // mock badge only if server says mock === true
+  badgeEl.hidden = !(json && json.mock === true);
+}
+
+function showError(msg) {
+  summaryEl.textContent = `Error: ${msg}`;
+  buyList.innerHTML = holdList.innerHTML = sellList.innerHTML = utrList.innerHTML = '';
+}
+
+// -------------------- API calls --------------------
 async function postJSON(url, body) {
   const r = await fetch(url, {
     method: 'POST',
-    headers: {'Content-Type':'application/json', 'Accept':'application/json'},
-    body: JSON.stringify(body||{})
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body || {})
   });
-  const j = await r.json().catch(()=> ({}));
-  if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
-  return j;
-}
-
-// -------- Charts (sparklines) --------
-async function renderSparkline(canvas, ticker, days=180) {
+  const text = await r.text();
   try {
-    const data = await getJSON(`/api/series?ticker=${encodeURIComponent(ticker)}&days=${days}`);
-    const xs = data.series.map(p => new Date(p.t));
-    const ys = data.series.map(p => p.close);
-
-    if (!xs.length) {
-      canvas.replaceWith(elNode(`<div class="text-sm" style="color:#9ab3cc">No price data</div>`));
-      return;
-    }
-
-    // Chart.js (already loaded in analysis.html)
-    const ctx = canvas.getContext('2d');
-    // destroy old chart if any
-    if (canvas._ch) { canvas._ch.destroy(); }
-
-    canvas._ch = new Chart(ctx, {
-      type: 'line',
-      data: { labels: xs, datasets: [{ data: ys, fill: false, tension: 0.25 }] },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: { legend: { display: false }, tooltip: { enabled: false } },
-        elements: { point: { radius: 0 } },
-        scales: { x: { display: false }, y: { display: false } }
-      }
-    });
+    const json = JSON.parse(text);
+    if (!r.ok && json?.error) throw new Error(json.error);
+    return json;
   } catch (e) {
-    canvas.replaceWith(elNode(`<div class="text-sm" style="color:#9ab3cc">Chart error</div>`));
-    console.error('[sparkline]', ticker, e);
+    throw new Error(`Bad JSON: ${text.slice(0, 160)}`);
   }
 }
 
-// -------- Rendering --------
-function elNode(html) {
-  const t = document.createElement('template');
-  t.innerHTML = html.trim();
-  return t.content.firstElementChild;
-}
-
-function stockCard(item, lane='buy') {
-  const {
-    ticker='', name='', thesis='',
-    timeframe='', confidence=0, risk='',
-    catalysts = []
-  } = item;
-
-  const confW = Math.max(0, Math.min(100, Number(confidence)||0));
-
-  const catalystsHtml = Array.isArray(catalysts) && catalysts.length
-    ? `<div class="text-sm" style="color:#9ab3cc"><strong>Catalysts:</strong> ${catalysts.map(esc).join('; ')}</div>`
-    : '';
-
-  const card = elNode(`
-    <article class="stock-card card">
-      <div style="display:flex; justify-content:space-between; align-items:baseline; gap:8px;">
-        <h3>${esc(ticker)} <span style="color:#9ab3cc; font-weight:400;">${esc(name)}</span></h3>
-        <span class="badge" style="color:#9ab3cc">${esc(timeframe)} • ${esc(risk)}</span>
-      </div>
-
-      <p>${esc(thesis)}</p>
-
-      <div class="conf-bar" title="Confidence: ${fmtPct(confW)}">
-        <div class="conf-bar-fill" style="width:${confW}%;"></div>
-      </div>
-
-      ${catalystsHtml}
-
-      <div style="height:80px; margin-top:8px;">
-        <canvas width="300" height="80"></canvas>
-      </div>
-
-      <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:8px;">
-        <button class="btn" data-watch="${esc(ticker)}">+ Watch</button>
-        <button class="btn" data-compare="${esc(ticker)}">+ Compare</button>
-      </div>
-    </article>
-  `);
-
-  // hook watch / compare buttons
-  card.querySelectorAll('[data-watch]').forEach(b=>{
-    b.addEventListener('click', ()=> addToWatchlist(ticker));
-  });
-  card.querySelectorAll('[data-compare]').forEach(b=>{
-    b.addEventListener('click', ()=> addToCompare(ticker));
-  });
-
-  // draw sparkline
-  const canvas = card.querySelector('canvas');
-  renderSparkline(canvas, ticker).catch(()=>{});
-
-  return card;
-}
-
-function renderResult(json, from='screen') {
-  lastResult = json;
-
-  // Summary
-  summaryEl.innerHTML = esc(json.summary || '');
-
-// lanes
-  const lanes = [
-    [buyList, json.buy],
-    [holdList, json.hold],
-    [sellList, json.sell]
-  ];
-  lanes.forEach(([root, arr]) => {
-    root.innerHTML = '';
-    if (Array.isArray(arr)) {
-      arr.forEach(it => root.appendChild(stockCard(it)));
-    }
-  });
-
-  // Under the radar
-  utrList.innerHTML = '';
-  if (Array.isArray(json.underTheRadar)) {
-    json.underTheRadar.forEach(it => {
-      const card = elNode(`
-        <article class="stock-card card">
-          <div style="display:flex; justify-content:space-between; align-items:baseline; gap:8px;">
-            <h3>${esc(it.ticker || '')} <span style="color:#9ab3cc; font-weight:400;">${esc(it.name || '')}</span></h3>
-            <span class="badge" style="color:#9ab3cc">${esc(it.timeframe || '')} • ${esc(it.risk || '')}</span>
-          </div>
-          <p>${esc(it.whyInteresting || it.thesis || '')}</p>
-          <div class="conf-bar"><div class="conf-bar-fill" style="width:${fmtPct(it.confidence||0)}"></div></div>
-          <div style="height:80px; margin-top:8px;">
-            <canvas width="300" height="80"></canvas>
-          </div>
-          <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:8px;">
-            <button class="btn" data-watch="${esc(it.ticker || '')}">+ Watch</button>
-            <button class="btn" data-compare="${esc(it.ticker || '')}">+ Compare</button>
-          </div>
-        </article>
-      `);
-      card.querySelectorAll('[data-watch]').forEach(b=>{
-        b.addEventListener('click', ()=> addToWatchlist(it.ticker));
-      });
-      card.querySelectorAll('[data-compare]').forEach(b=>{
-        b.addEventListener('click', ()=> addToCompare(it.ticker));
-      });
-      const canvas = card.querySelector('canvas');
-      if (it.ticker) renderSparkline(canvas, it.ticker).catch(()=>{});
-      utrList.appendChild(card);
-    });
-  }
-
-  // Disclaimers
-  const d = Array.isArray(json.disclaimers) ? json.disclaimers : [];
-  disclaimersEl.innerHTML = d.map(t => `<div style="color:#9ab3cc">${esc(t)}</div>`).join('');
-
-  // Hide/show mock badge based on whether response looks mocked
-  const mockish =
-    (json.buy?.some(x => x.ticker === 'XOM') && json.hold?.some(x => x.ticker === 'NVDA')) ||
-    /not financial advice/i.test((json.disclaimers||[]).join(' '));
-  badgeEl.hidden = !mockish;
-}
-
-// -------- Actions --------
-async function runScreen() {
+// -------------------- actions --------------------
+async function runAnalysis() {
   try {
-    summaryEl.innerHTML = '<em>Analyzing…</em>';
-    [buyList, holdList, sellList, utrList].forEach(el => el.innerHTML = '');
-    const body = { risk: riskSel.value, region: regionSel.value };
-    const json = await postJSON('/api/screen', body);
-    renderResult(json, 'screen');
+    runBtn.disabled = true;
+    const risk = riskEl.value || 'medium';
+    const region = regionEl.value || 'US';
+    const json = await postJSON('/api/screen', { risk, region });
+    renderAll(json);
   } catch (e) {
-    console.error('[screen]', e);
-    summaryEl.innerHTML = `<span style="color:#e88">Error: ${esc(e.message)}</span>`;
+    console.error(e);
+    showError(e.message || 'Failed');
+  } finally {
+    runBtn.disabled = false;
   }
 }
 
 async function analyzeTicker(ticker) {
-  const t = (ticker || '').trim().toUpperCase();
-  if (!t) return;
+  if (!ticker) return;
   try {
-    summaryEl.innerHTML = `<em>Analyzing ${esc(t)}…</em>`;
-    [buyList, holdList, sellList, utrList].forEach(el => el.innerHTML = '');
-    const json = await postJSON('/api/analyze', { ticker: t });
-    renderResult(json, 'analyze');
+    const json = await postJSON('/api/analyze', { ticker });
+    renderAll(json);
   } catch (e) {
-    console.error('[analyze]', e);
-    summaryEl.innerHTML = `<span style="color:#e88">Error: ${esc(e.message)}</span>`;
+    console.error(e);
+    showError(e.message || 'Failed');
   }
 }
 
-// -------- Export CSV --------
-function toCSV(rows) {
-  const escCSV = (v='') => `"${String(v).replace(/"/g,'""')}"`;
-  const header = ['lane','ticker','name','confidence','risk','timeframe','thesis','catalysts'].map(escCSV).join(',');
-  const lines = [header];
+// Export CSV
+function exportCSV() {
+  if (!lastResult) return;
+  const rows = [];
+  const pushRows = (arr, lane) => (arr || []).forEach(x => rows.push([
+    lane, x.ticker, x.name || '', x.timeframe || '', x.risk || '',
+    x.confidence ?? '', (x.thesis || x.whyInteresting || '').replace(/\s+/g,' '),
+    Array.isArray(x.catalysts) ? x.catalysts.join('; ') : ''
+  ]));
+  pushRows(lastResult.buy, 'BUY');
+  pushRows(lastResult.hold, 'HOLD');
+  pushRows(lastResult.sell, 'SELL');
+  pushRows(lastResult.underTheRadar, 'UTR');
 
-  const pushLane = (lane, arr=[]) => arr.forEach(it=>{
-    lines.push([
-      lane, it.ticker, it.name, it.confidence, it.risk, it.timeframe,
-      it.thesis || it.whyInteresting || '',
-      Array.isArray(it.catalysts) ? it.catalysts.join('; ') : ''
-    ].map(escCSV).join(','));
-  });
+  const csv = [
+    ['Lane','Ticker','Name','Timeframe','Risk','Confidence','Thesis','Catalysts'].join(','),
+    ...rows.map(r => r.map(v => `"${String(v).replaceAll('"','""')}"`).join(','))
+  ].join('\n');
 
-  pushLane('BUY', lastResult?.buy);
-  pushLane('HOLD', lastResult?.hold);
-  pushLane('SELL', lastResult?.sell);
-  pushLane('UTR', lastResult?.underTheRadar);
-
-  return lines.join('\n');
-}
-
-function download(name, content, mime='text/plain') {
-  const blob = new Blob([content], { type: mime });
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = url; a.download = name;
-  document.body.appendChild(a); a.click();
-  setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); }, 0);
+  a.href = url; a.download = 'TradeSense_analysis.csv'; a.click();
+  URL.revokeObjectURL(url);
 }
 
-// -------- Compare (sidebar) --------
-const compareSet = new Set();
-
-function renderCompareList() {
-  compareList.innerHTML = '';
-  if (!compareSet.size) {
-    compareList.innerHTML = `<div class="text-sm" style="color:#9ab3cc">Add tickers to compare.</div>`;
-    return;
-  }
-  compareSet.forEach(t=>{
-    const row = elNode(`
-      <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; border:1px solid #1e2a3b; border-radius:8px; padding:6px 8px; margin-bottom:6px;">
-        <strong>${esc(t)}</strong>
-        <button class="btn" data-remove="${esc(t)}">Remove</button>
-      </div>
-    `);
-    row.querySelector('[data-remove]').addEventListener('click', ()=> {
-      compareSet.delete(t);
-      renderCompareList();
-    });
-    compareList.appendChild(row);
-  });
-}
-
-function addToCompare(ticker) {
-  if (!ticker) return;
-  compareSet.add(ticker.toUpperCase());
-  renderCompareList();
-}
-
-async function runCompare() {
-  compareResults.innerHTML = '';
-  if (!compareSet.size) {
-    compareResults.innerHTML = `<div class="card">No tickers to compare yet.</div>`;
-    return;
-  }
-  for (const t of compareSet) {
-    const card = elNode(`
-      <div class="card" style="display:grid; gap:6px;">
-        <div style="display:flex; justify-content:space-between; align-items:center;">
-          <strong>${esc(t)}</strong>
-          <span class="text-sm" style="color:#9ab3cc">180d</span>
-        </div>
-        <div style="height:100px;"><canvas width="320" height="100"></canvas></div>
-      </div>
-    `);
-    compareResults.appendChild(card);
-    const canvas = card.querySelector('canvas');
-    renderSparkline(canvas, t, 180).catch(()=>{});
-    // small breath to avoid hammering provider
-    await sleep(120);
-  }
-}
-
-// -------- Watchlist (localStorage) --------
-const WATCH_KEY = 'tradesense.watch';
-function loadWatch() {
-  try {
-    const arr = JSON.parse(localStorage.getItem(WATCH_KEY) || '[]');
-    return Array.isArray(arr) ? arr : [];
-  } catch { return []; }
-}
-function saveWatch(arr) { localStorage.setItem(WATCH_KEY, JSON.stringify(arr)); }
-
+// -------------------- compare + watchlist (no charts) --------------------
+function saveWatch() { localStorage.setItem('ts.watchlist', JSON.stringify(watchlist)); renderWatch(); }
+function addToWatch(t) { t = (t || '').toUpperCase(); if (!t) return; if (!watchlist.includes(t)) watchlist.push(t); saveWatch(); }
+function removeFromWatch(t) { watchlist = watchlist.filter(x => x !== t); saveWatch(); }
 function renderWatch() {
-  const arr = loadWatch();
-  watchItems.innerHTML = '';
-  if (!arr.length) {
-    watchItems.innerHTML = `<div class="text-sm" style="color:#9ab3cc">No symbols yet.</div>`;
-    return;
-  }
-  arr.forEach(t=>{
-    const row = elNode(`
-      <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; border:1px solid #1e2a3b; border-radius:8px; padding:6px 8px; margin-bottom:6px;">
-        <span>${esc(t)}</span>
-        <div style="display:flex; gap:6px;">
-          <button class="btn" data-analyze="${esc(t)}">Analyze</button>
-          <button class="btn" data-del="${esc(t)}">Remove</button>
-        </div>
+  if (!watchItems) return;
+  if (!watchlist.length) { watchItems.innerHTML = '<div class="muted">No symbols yet.</div>'; return; }
+  watchItems.innerHTML = watchlist.map(t => `
+    <div class="row" style="justify-content:space-between">
+      <span>${t}</span>
+      <div style="display:flex;gap:8px">
+        <button class="btn" data-an="${t}">Analyze</button>
+        <button class="btn" data-rm="${t}">Remove</button>
       </div>
-    `);
-    row.querySelector('[data-analyze]').addEventListener('click', ()=> analyzeTicker(t));
-    row.querySelector('[data-del]').addEventListener('click', ()=>{
-      const next = loadWatch().filter(x => x !== t);
-      saveWatch(next); renderWatch();
-    });
-    watchItems.appendChild(row);
-  });
+    </div>
+  `).join('');
+  watchItems.querySelectorAll('[data-an]').forEach(b => b.addEventListener('click', () => analyzeTicker(b.getAttribute('data-an'))));
+  watchItems.querySelectorAll('[data-rm]').forEach(b => b.addEventListener('click', () => removeFromWatch(b.getAttribute('data-rm'))));
 }
-
-function addToWatchlist(t) {
-  const u = (t||'').toUpperCase();
-  if (!u) return;
-  const arr = loadWatch();
-  if (!arr.includes(u)) {
-    arr.push(u); saveWatch(arr); renderWatch();
-  }
+function addCompareTicker(t){ t=(t||'').toUpperCase(); if(!t) return; if(!compareTickers.includes(t)) compareTickers.push(t); renderCompareList(); }
+function removeCompareTicker(t){ compareTickers = compareTickers.filter(x=>x!==t); renderCompareList(); }
+function renderCompareList(){
+  if(!compareList) return;
+  if(!compareTickers.length){ compareList.innerHTML = '<div class="muted">Add tickers to compare.</div>'; return; }
+  compareList.innerHTML = compareTickers.map(t => `
+    <div class="row" style="justify-content:space-between">
+      <span>${t}</span>
+      <button class="btn" data-del="${t}">Remove</button>
+    </div>
+  `).join('');
+  compareList.querySelectorAll('[data-del]').forEach(b => b.addEventListener('click', () => removeCompareTicker(b.getAttribute('data-del'))));
 }
+function runCompare(){ /* charts removed — keep list only */ }
 
-// -------- Wire up events --------
-runBtn?.addEventListener('click', runScreen);
-
-exportBtn?.addEventListener('click', ()=>{
-  if (!lastResult) return alert('Run an analysis first.');
-  const csv = toCSV([]);
-  download(`tradesense_${Date.now()}.csv`, toCSV(), 'text/csv');
-});
-
-// Single ticker search
-searchForm?.addEventListener('submit', (e)=>{
+// -------------------- wire up --------------------
+runBtn?.addEventListener('click', runAnalysis);
+exportBtn?.addEventListener('click', exportCSV);
+searchForm?.addEventListener('submit', (e) => {
   e.preventDefault();
-  const t = tickerInput?.value || '';
-  analyzeTicker(t);
+  analyzeTicker((tickerInput?.value || '').trim());
 });
-
-// Compare form
-compareForm?.addEventListener('submit', (e)=>{
+compareForm?.addEventListener('submit', (e) => {
   e.preventDefault();
-  const t = (compareInput?.value || '').trim().toUpperCase();
-  if (t) addToCompare(t);
-  compareInput.value = '';
+  const v = (compareInput?.value || '').trim();
+  if (v) { addCompareTicker(v); compareInput.value=''; }
 });
 compareRunBtn?.addEventListener('click', runCompare);
 
-// Initial UI state
-renderCompareList();
+// initial renders
 renderWatch();
-summaryEl.innerHTML = `<em>Click “Run Analysis” or analyze a specific ticker.</em>`;
+renderCompareList();
+
+// Optionally auto-run once:
+// runAnalysis();
