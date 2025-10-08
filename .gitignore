@@ -1,2 +1,19 @@
-.env
+# Node
+node_modules/
+npm-debug.log*
+# Keep lockfile in repo (recommended): do NOT ignore package-lock.json
+
+# Env / secrets
 server/.env
+.env
+
+# OS / editor
+.DS_Store
+*.swp
+
+# Build artifacts
+dist/
+coverage/
+
+# Misc
+TradeSense/   # ignore stray nested copy if created accidentally
